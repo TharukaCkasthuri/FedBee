@@ -19,10 +19,8 @@ Published in:
 """
 
 import torch
-
-from tqdm import tqdm
 from torch.utils.data import DataLoader
-
+from utils import get_device
 
 class Client:
     """
@@ -45,10 +43,12 @@ class Client:
         learning_rate: float,
         weight_decay: float,
         local_model: object = None,
+        #worker: object = None
     ) -> None:
 
         self.client_id: str = client_id
         self.batch_size = batch_size
+        #self.worker = worker
 
         self.traindl = DataLoader(
             train_dataset, batch_size, shuffle=True, drop_last=True
@@ -59,7 +59,9 @@ class Client:
             lr=learning_rate,
             weight_decay=weight_decay,
         )
+        self.device = get_device()
         self.local_model = local_model
+        self.local_model = local_model.to(self.device)
 
     def set_model(self, model_weights) -> None:
         """
@@ -104,16 +106,17 @@ class Client:
 
         if global_round:
             print(
-                f"Global Round: {global_round} \tClient: {self.client_id} Started it's local training"
+                f"Global Round: {global_round} \tClient: {self.client_id} Started its local training"
             )
         else:
-            print(f"Client: {self.client_id} Started it's local training")
+            print(f"Client: {self.client_id} Started its local training")
 
         train_losses = []
         for epoch in range(epochs):
             print("\n")
             batch_loss = []
             for batch_idx, (x, y) in enumerate(self.traindl):
+                x, y = x.to(self.device), y.to(self.device)
                 outputs = self.local_model(x)
                 y = y.view(-1, 1)
                 loss = loss_fn(outputs, y)
@@ -121,13 +124,9 @@ class Client:
                 loss.backward()
                 self.optimizer.step()
 
-                # if batch_idx % 50 == 0:
-                #    print(
-                #        f"Epoch: {epoch + 1} \tClient ID: {self.client_id} \t[{batch_idx * len(x)}/{len(self.traindl.dataset)} ({100.0 * batch_idx / len(self.traindl):.0f}%)] \tLoss: {loss.item():.6f}"
-                #    )
-
                 batch_loss.append(loss.item())
 
+            print(len(batch_loss))
             loss_avg = sum(batch_loss) / len(batch_loss)
             train_losses.append(loss_avg)
 
@@ -135,10 +134,10 @@ class Client:
                 f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg}"
             )
 
-        validation_loss = self.eval(loss_fn)
-        print(f"Client: {self.client_id} \tValidation Loss: {validation_loss}")
+        #validation_loss = self.eval(loss_fn)
+        #print(f"Client: {self.client_id} \tValidation Loss: {validation_loss}")
 
-        return self.local_model, train_losses, validation_loss
+        return self.local_model, train_losses #,validation_loss
 
     def eval(self, loss_fn) -> float:
         """
