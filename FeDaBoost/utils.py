@@ -18,6 +18,7 @@ Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
 Published in: [Journal/Conference Name]
 """
 
+import os
 import torch
 import itertools
 
@@ -39,9 +40,26 @@ def get_device() -> torch.device:
     --------
     device: torch.device object
     """
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
 
 
+def get_client_ids(folder_path):
+    client_ids = []
+    try:
+        files = os.listdir(folder_path)
+        for file in files:
+            if file.endswith('.pt'):
+                client_id = file.split('.')[0]
+                client_ids.append(client_id)
+        return client_ids
+    except Exception as e:
+        raise e
+    
 def get_all_possible_pairs(client_ids: list) -> list:
     """
     Returns all possible pairs of client ids.

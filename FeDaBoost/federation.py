@@ -26,14 +26,17 @@ import os
 import pandas as pd
 from tqdm import tqdm
 
-from clients import Client
-from utils import get_device
+from clients import Client, FlowerClient
+from server import Server
+from utils import get_device, get_client_ids
 from evals import evaluate
 from models.kv import ShallowNN
+from models.femnist import SimpleNet
 from params import model_hparams
 from  aggregators import fedAvg,fedProx
 
 from datasets.kv.preprocess import KVDataSet
+from datasets.femnist.preprocess import FEMNISTDataset
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -43,28 +46,22 @@ class Federation:
 
     Parameters:
     ------------
-    checkpt_path: str;
-        Path to save the model
-    features: int;
-        Number of features in the input data.
-    loss_fn: torch.nn.Module object;
-        The loss function used for training.
-    batch_size: int;
-        The batch size for training.
-    learning_rate: float;
-        The learning rate for the optimizer.
-    rounds : int
-        The number of training rounds in federated learning.
-    epochs_per_round : int
-        The number of training epochs per round.
+    client_ids: list;
+        List of client ids.
+    model: torch.nn.Module;
+        Model to be trained.
+    loss_fn: torch.nn.Module;
+        Loss function.
+    global_rounds: int;
+        Number of global rounds.
+    stratergy: callable;
+        Federated learning averaging stratergy.
+
 
     Methods:
     ----------
-    __init__(self, checkpt_path: str, features: int, loss_fn, batch_size, learning_rate, rounds, epochs_per_round):
+    __init__(self, client_ids: list, model: torch.nn.Module, loss_fn:torch.nn.Module, global_rounds: int, stratergy: callable, local_rounds: int) -> None:
         Initializes a Federation instance with the specified parameters.
-
-    set_clients(self, client_ids: list) -> None:
-        Sets up the clients for federated learning.
 
     train(self, model, summery=False) -> tuple:
         Trains the model using federated learning.
@@ -75,153 +72,57 @@ class Federation:
 
     def __init__(
         self,
-        checkpt_path: str,
-        features: int,
+        client_ids: list,
+        model: torch.nn.Module,
         loss_fn: torch.nn.Module,
         global_rounds: int,
+        stratergy: callable,
         local_rounds: int,
-        save_ckpt: bool = False,
-        log_summary: bool = False,
     ) -> None:
-        self.checkpt_path = checkpt_path
-        self.features = features
+        
+        self.client_ids = client_ids
+        self.model = model
         self.loss_fn = loss_fn
         self.global_rounds = global_rounds
         self.local_rounds = local_rounds
-        self.save_ckpt = save_ckpt
-        self.log_summary = log_summary
+        self.stratergy = stratergy
 
-        # self.writer = SummaryWriter(comment="_fed_train_batch" + str(batch_size))
+        # Initialize the server
+        self.server = Server(global_rounds,stratergy)
+        self.server.init_model(model)
 
-    def set_clients(self, client_ids: list) -> None:
-        """
-        Setting up the clients for federated learning.
-
-        Parameters:
-        ----------------
-        client_ids: list;
-            List of client ids
-
-        Returns:
-        ----------------
-        None
-        """
-        self.client_ids = client_ids
-        self.clients = [
-            Client(
+        # Set up the clients
+        for id in client_ids:
+            self.server.connect_client(Client(
                 id,
-                torch.load(f"datasets/kv/trainpt/{id}.pt"),
-                torch.load(f"datasets/kv/testpt/{id}.pt"),
-                model_hparams[f"{id}"]["batch_size"],
-                model_hparams[f"{id}"]["learning_rate"],
-                model_hparams[f"{id}"]["weight_decay"],
-                local_model=ShallowNN(self.features),
-            )
-            for id in client_ids
-        ]
-        self.client_dict = {
-            client_id: {"training_loss": [], "validation_loss": []}
-            for client_id in client_ids
-        }
+                torch.load(f"datasets/femnist/trainpt/{id}.pt"),
+                torch.load(f"datasets/femnist/testpt/{id}.pt"),
+                self.loss_fn,
+                32,
+                0.01,
+                0.01,
+                self.local_rounds,
+                local_model=SimpleNet(62),
+            ))
 
     def train(
-        self,
-        model: torch.nn.Module,
-        agg_fn: callable = fedAvg,
-        log_summary: bool = False,
+        self
     ) -> tuple:
         """
         Training the model.
 
         Parameters:
         ----------------
-        model:torch.nn.Module;
-            Model to be trained. The model should have a track_layers attribute which is a dictionary of the layers to be trained.
-        summery: bool;
-            Whether to save the training stats and the model. Default is False.
-
-        Returns:
-        ----------------
-        global_model:torch.nn.Module;
-            Trained model
-        training_stats: list;
-            Training stattistics as a list of dictionaries
-        """
-
-        print(agg_fn.__name__)
-
-        # initiate global model
-        global_model = model
-        global_model.train()
-
-        global_weights = global_model.state_dict()
-        model_layers = global_model.track_layers.keys()
-
-        for round in tqdm(range(self.global_rounds)):
-            local_models = []
-
-            print(f"\n | Global Training Round : {round+1} |\n")
-
-            global_model.load_state_dict(global_weights)
-
-            for client in self.clients:
-                client_id = client.client_id
-
-                # loading the global model weights to client model
-                client.set_model(global_weights)
-
-                # training the client model for n' epochs
-                client_model, train_loss, validation_loss = client.train(
-                    self.loss_fn, self.local_rounds, round+1
-                )
-
-                local_models.append(client_model)
-
-                if self.save_ckpt:
-                    local_path = f"{self.checkpt_path}/global_{round+1}/clients/client_model_{client_id}.pth"
-                    self.save_models(client_model, local_path)
-
-                self.client_dict[client_id]["training_loss"].append(train_loss)
-                self.client_dict[client_id]["validation_loss"].append(validation_loss)
-
-            # update global model parameters here
-
-            if agg_fn.__name__ == "fedAvg":
-                global_model = fedAvg(global_model, local_models)
-                global_weights = global_model.state_dict()
-            elif agg_fn.__name__ == "fedProx":
-                global_model = fedProx(global_model, local_models, 0.1)
-                global_weights = global_model.state_dict()
-
-            if self.save_ckpt:
-                global_path = f"{self.checkpt_path}/global_{round+1}/global_model.pth"
-                self.save_models(global_model, global_path)
-
-        return global_model
-
-    def save_stats(self):
-        """
-        Saving the training stats and the model.
         
-        Parameters:
-        ----------------
-        model:
-            Trained model.
-        training_stats: list;
-            Training stattistics as a list of dictionaries
-            
+
         Returns:
         ----------------
-        None
+       
         """
-        for client_id, data in self.client_dict.items():
-            file_path = f"training_stats/fedl/fl_stats_epoch{self.global_rounds}_{self.local_rounds}/client_{client_id}.csv"
-            df = pd.DataFrame(data)
-            if os.path.exists(file_path):
-                df.to_csv(file_path, index=False)
-            else:
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                df.to_csv(file_path, index=False)
+
+        self.server.train()
+
+        return None
 
 
     def save_models(self, model: torch.nn.Module, ckptpath: str) -> None:
@@ -258,12 +159,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Federated training parameters")
     parser.add_argument("--loss_function", type=str, default="L1Loss")
     parser.add_argument("--log_summary", action="store_true")
-    parser.add_argument("--global_rounds", type=int, default=25)
+    parser.add_argument("--global_rounds", type=int, default=2)
     parser.add_argument("--local_rounds", type=int, default=10)
     parser.add_argument("--save_ckpt", action="store_true")
     args = parser.parse_args()
 
-    features = 169
 
     # Hyper Parameters
     loss_fn = getattr(torch.nn, args.loss_function)()
@@ -275,30 +175,23 @@ if __name__ == "__main__":
 
     checkpt_path = f"checkpt/fedl/selected_/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
 
+    client_ids = get_client_ids("datasets/femnist/trainpt")[0:10]
+    model = SimpleNet(62)
+
     federation = Federation(
-        checkpt_path,
-        features,
+        client_ids,
+        model,
         loss_fn,
         global_rounds,
+        "fedavg",
         local_rounds,
-        save_ckpt,
-        log_summary,
     )
-
-    client_ids = [f"c{i}" for i in range(1, 25)]
     
     print("Federation with clients " + ", ".join(client_ids))
 
     start = time.time()
-    federation.set_clients(client_ids=client_ids)
-    model = ShallowNN(169)
-    trained_model = federation.train(model)
-    federation.save_stats()
+    trained_model = federation.train()
     model_path = f"{checkpt_path}/global_model.pth"
-    federation.save_models(trained_model.eval(), model_path)
-
-    # federation.save_stats(trained_model, training_stats)
-
     print("Federation with clients " + ", ".join(client_ids))
     print(
         "Approximate time taken to train",

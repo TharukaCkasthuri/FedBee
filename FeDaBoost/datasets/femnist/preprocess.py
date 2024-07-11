@@ -143,3 +143,8 @@ def main():
     
 if __name__ == "__main__":
     main()
+    #train_data_dir = os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','train')
+    #test_data_dir = os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','test')
+    #train_clients, train_groups, train_data, test_data = read_data(train_data_dir, test_data_dir)
+    #print(train_clients)
+    #print(train_data['f3866_43']['y'])

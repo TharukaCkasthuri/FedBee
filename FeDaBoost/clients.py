@@ -19,6 +19,8 @@ Published in:
 """
 
 import torch
+import flwr as fl
+
 from torch.utils.data import DataLoader
 from utils import get_device
 
@@ -39,16 +41,18 @@ class Client:
         client_id: str,
         train_dataset: object,
         test_dataset: object,
+        loss_fn: torch.nn.Module,
         batch_size: int,
         learning_rate: float,
         weight_decay: float,
+        local_rounds: int,
         local_model: object = None,
-        #worker: object = None
     ) -> None:
 
         self.client_id: str = client_id
+        self.loss_fn = loss_fn
         self.batch_size = batch_size
-        #self.worker = worker
+        self.local_round = local_rounds
 
         self.traindl = DataLoader(
             train_dataset, batch_size, shuffle=True, drop_last=True
@@ -71,7 +75,9 @@ class Client:
         ------------
         model: torch.nn.Module object; model
         """
+        print(self.local_model.state_dict())
         self.local_model.load_state_dict(model_weights)
+        print(self.local_model.state_dict())
 
     def get_model(self) -> object:
         """
@@ -87,7 +93,7 @@ class Client:
         """
         return self.local_model
 
-    def train(self, loss_fn, epochs, global_round=None) -> tuple:
+    def train(self) -> tuple:
         """
         Training the model.
 
@@ -104,22 +110,15 @@ class Client:
         loss_avg: float; average loss
         """
 
-        if global_round:
-            print(
-                f"Global Round: {global_round} \tClient: {self.client_id} Started its local training"
-            )
-        else:
-            print(f"Client: {self.client_id} Started its local training")
-
         train_losses = []
-        for epoch in range(epochs):
+        for epoch in range(self.local_round):
             print("\n")
             batch_loss = []
             for batch_idx, (x, y) in enumerate(self.traindl):
                 x, y = x.to(self.device), y.to(self.device)
                 outputs = self.local_model(x)
                 y = y.view(-1, 1)
-                loss = loss_fn(outputs, y)
+                loss = self.loss_fn(outputs, y)
                 self.local_model.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -133,11 +132,7 @@ class Client:
             print(
                 f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg}"
             )
-
-        #validation_loss = self.eval(loss_fn)
-        #print(f"Client: {self.client_id} \tValidation Loss: {validation_loss}")
-
-        return self.local_model, train_losses #,validation_loss
+        return self.local_model, train_losses 
 
     def eval(self, loss_fn) -> float:
         """
@@ -161,3 +156,27 @@ class Client:
         loss_avg = sum(batch_loss) / len(batch_loss)
 
         return loss_avg
+
+class FlowerClient(fl.client.NumPyClient):
+    def __init__(self, client: Client):
+        self.client = client
+
+    def get_parameters(self):
+        return [val.cpu().numpy() for val in self.client.get_model().parameters()]
+
+    def set_parameters(self, parameters):
+        params_dict = zip(self.client.get_model().state_dict().keys(), parameters)
+        state_dict = {k: torch.tensor(v) for k, v in params_dict}
+        self.client.get_model().load_state_dict(state_dict, strict=True)
+
+    def fit(self, parameters, config):
+        self.set_parameters(parameters)
+        loss_fn = torch.nn.CrossEntropyLoss()
+        model, train_losses = self.client.train(loss_fn, epochs=config["epochs"])
+        return self.get_parameters(), len(self.client.traindl.dataset), {}
+
+    def evaluate(self, parameters, config):
+        self.set_parameters(parameters)
+        loss_fn = torch.nn.CrossEntropyLoss()
+        loss = self.client.eval(loss_fn)
+        return float(loss), len(self.client.valdl.dataset), {}
