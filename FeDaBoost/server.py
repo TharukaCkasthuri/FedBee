@@ -1,6 +1,6 @@
 import torch
 from clients import Client
-from aggregators import fedAvg
+from aggregators import fedAvg, fedProx
 
 class Server:
     def __init__(self,rounds:int, stratergy:callable) -> None:
@@ -37,9 +37,10 @@ class Server:
         ----------------
         None
         """
+        
         client_id = client.client_id
-        self.client_dict = {
-            client_id: client}
+        self.client_dict[client_id] = client
+        print(len(self.client_dict))
         
     def __aggregate(self) -> None:
         """
@@ -58,15 +59,19 @@ class Server:
         client_models = [client.get_model() for client in self.client_dict.values()]
         if self.stratergy == "fedavg":
             self.global_model = fedAvg(self.global_model, client_models)
-        else:
-            pass
+        elif self.stratergy == "fedprox":
+            self.global_model = fedProx(self.global_model, client_models)
+        return self.global_model
 
     def __broadcast(self, model: torch.nn.Module) -> None:
         """
         Broadcast the model to the clients.
         """
-        for client in self.client_dict.values():
-            client.set_model(self.global_model.state_dict()) 
+        model_state_dict = model.state_dict()
+        for client_id, client in self.client_dict.items():
+            client.set_model(model_state_dict)
+            self.client_dict[client_id] = client
+            print(f"Broadcasted model to client {client.client_id}")
 
     def __receive(self, client:callable) -> list:
         """
@@ -77,6 +82,7 @@ class Server:
         models: list;
             List of models
         """
+        print(f"Received model from client {client.client_id}")
         self.client_dict[client.client_id] = client
 
     def train(self):
@@ -93,13 +99,14 @@ class Server:
         model: torch.nn.Module object;
             Trained model
         """
+        print(len(self.client_dict))
         for round in range(self.rounds):
             print(f"\n | Global Training Round : {round+1} |\n")
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
                 client_model, client_loss = client.train()
                 self.__receive(client)
-            self.__aggregate()
+            self.global_model = self.__aggregate()
             self.__broadcast(self.global_model)
 
         return self.global_model

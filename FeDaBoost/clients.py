@@ -73,11 +73,28 @@ class Client:
 
         Parameters:
         ------------
-        model: torch.nn.Module object; model
+        model_weights: dict; state dictionary of model weights
         """
-        print(self.local_model.state_dict())
+        # Get the parameters of the model before loading new weights
+        m1_params = [p.clone() for p in self.local_model.parameters()]
+
+        # Load the new weights into the model
         self.local_model.load_state_dict(model_weights)
-        print(self.local_model.state_dict())
+
+        # Get the parameters of the model after loading new weights
+        m2_params = list(self.local_model.parameters())
+
+        # Check if any parameters have changed
+        updated = False
+        for p1, p2 in zip(m1_params, m2_params):
+            if not torch.equal(p1.data, p2.data):
+                updated = True
+                print("False")
+                break
+
+        if not updated:
+            print("True")
+
 
     def get_model(self) -> object:
         """
@@ -96,20 +113,20 @@ class Client:
     def train(self) -> tuple:
         """
         Training the model.
-
+    
         Parameters:
         ------------
         model: torch.nn.Module object; model to be trained
         loss_fn: torch.nn.Module object; loss function
         optimizer: torch.optim object; optimizer
         epoch: int; epoch number
-
+    
         Returns:
         ------------
         model: torch.nn.Module object; trained model
         loss_avg: float; average loss
         """
-
+    
         train_losses = []
         for epoch in range(self.local_round):
             print("\n")
@@ -122,13 +139,12 @@ class Client:
                 self.local_model.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-
+    
                 batch_loss.append(loss.item())
-
-            print(len(batch_loss))
+    
             loss_avg = sum(batch_loss) / len(batch_loss)
             train_losses.append(loss_avg)
-
+    
             print(
                 f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg}"
             )
