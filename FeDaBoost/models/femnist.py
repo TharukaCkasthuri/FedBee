@@ -26,26 +26,21 @@ class SimpleNet(nn.Module):
     def __init__(self, num_classes):
         super(SimpleNet, self).__init__()
         self.num_classes = num_classes
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=5, padding=2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, padding=2)
-        self.fc1 = nn.Linear(7*7*64, 2048)
-        self.fc2 = nn.Linear(2048, self.num_classes)
-        self.track_layers = {
-            "conv1": self.conv1,
-            "conv2": self.conv2,
-            "fc1": self.fc1,
-            "fc2": self.fc2,
-        }
+        self.conv1 = nn.Conv2d(1, 8, kernel_size=5, padding=2)
+        self.fc1 = nn.Linear(14*14*8, self.num_classes)
+        self.bn1 = nn.BatchNorm2d(8)
+        self.dropout = nn.Dropout(p=0.5)
+        self.track_layers = {"conv1": self.conv1, 
+                             "fc1": self.fc1}
+
 
     def forward(self, x):
         x = x.view(-1, 1, 28, 28)
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2, 2)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.max_pool2d(x, 2, 2)  # Max pooling over a (2, 2) window
         x = x.view(x.size(0), -1)  # Flatten the tensor
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = self.dropout(x)  
+        x = self.fc1(x)
         return x
 
     def process_x(self, raw_x_batch):
@@ -53,4 +48,3 @@ class SimpleNet(nn.Module):
 
     def process_y(self, raw_y_batch):
         return torch.tensor(raw_y_batch, dtype=torch.long)
-

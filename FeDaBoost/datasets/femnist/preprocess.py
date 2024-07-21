@@ -111,6 +111,9 @@ class FEMNISTDataset(Dataset):
 
 def main():
 
+    BATCH_SIZE = 32
+    min_samples = 1 * BATCH_SIZE
+
     parser = argparse.ArgumentParser(description="FEMNIST dataset preprocessing parameters")
     parser.add_argument("--train_data_dir", type=str, default=os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','train'))
     parser.add_argument("--test_data_dir", type=str, default=os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','test'))
@@ -121,6 +124,9 @@ def main():
     train_clients, train_groups, train_data, test_data = read_data(train_data_dir, test_data_dir)
 
     for client in train_clients:
+        if len(train_data[client]['y']) < min_samples and len(test_data[client]['y']) < min_samples:
+            continue
+        
         train_dataset = FEMNISTDataset(train_data[client])
         torch.save(train_dataset, "./trainpt/" + str(client) + ".pt")
         test_dataset = FEMNISTDataset(test_data[client])
