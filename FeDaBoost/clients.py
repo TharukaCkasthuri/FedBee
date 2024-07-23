@@ -23,7 +23,6 @@ import flwr as fl
 
 from torch.utils.data import DataLoader
 from utils import get_device
-from models.mnist import MNISTNet
 from datasets.mnist.preprocess import MNISTDataset
 from datasets.femnist.preprocess import FEMNISTDataset
 
@@ -141,7 +140,7 @@ class Client:
             )
         return self.local_model, train_losses 
 
-    def eval(self, loss_fn) -> float:
+    def evaluate(self) -> float:
         """
         Evaluate the model with validation dataset.
 
@@ -156,14 +155,15 @@ class Client:
         """
         batch_loss = []
         for _, (x, y) in enumerate(self.valdl):
+            x, y = x.to(self.device), y.to(self.device)
             outputs = self.local_model(x)
-            if isinstance(loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+            if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
                 y = y.view(-1)
             elif isinstance(self.train_dataset, MNISTDataset):
                 y = torch.argmax(y, dim=1)
             else:
                 y = y.view(-1, 1)
-            loss = loss_fn(outputs, y)
+            loss = self.loss_fn(outputs, y)
             batch_loss.append(loss.item())
         loss_avg = sum(batch_loss) / len(batch_loss)
 

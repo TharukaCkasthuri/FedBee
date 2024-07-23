@@ -22,11 +22,14 @@ import torch
 import numpy as np
 
 
+from torch.utils.data import DataLoader
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from datasets.femnist.preprocess import FEMNISTDataset
+from datasets.mnist.preprocess import MNISTDataset
 
 def evaluate(
     model: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
+    test_data: torch.utils.data.DataLoader,
     loss_fn: torch.nn.Module,
 ) -> tuple:
     """
@@ -51,20 +54,21 @@ def evaluate(
         Average mean absolute error.
 
     """
-    model.eval()
-    loss, mse, mae = [], [], []
-
-    for _, (x, y) in enumerate(dataloader):
-        predicts = model(x)
-        batch_loss = loss_fn(predicts, y)
-
-        loss.append(batch_loss.item())
-        batch_mse = mean_squared_error(y, np.squeeze(predicts.detach().numpy()))
-        mse.append(batch_mse)
-        batch_mae = mean_absolute_error(y, np.squeeze(predicts.detach().numpy()))
-        mae.append(batch_mae)
-
-    return sum(loss) / len(loss), sum(mse) / len(mse), sum(mae) / len(mae)
+    testdl = DataLoader(test_data, 32, shuffle=True, drop_last=True)
+    batch_loss = []
+    for _, (x, y) in enumerate(testdl):
+        outputs = model(x)
+        if isinstance(loss_fn, torch.nn.CrossEntropyLoss) and isinstance(test_data, FEMNISTDataset):
+            y = y.view(-1)
+        elif isinstance(test_data, MNISTDataset):
+            y = torch.argmax(y, dim=1)
+        else:
+            y = y.view(-1, 1)
+        loss = loss_fn(outputs, y)
+        batch_loss.append(loss.item())
+    
+    loss = np.mean(batch_loss)
+    return loss
 
 
 def evaluate_mae_with_confidence(

@@ -33,7 +33,6 @@ class FEMNISTNet(nn.Module):
         self.track_layers = {"conv1": self.conv1, 
                              "fc1": self.fc1}
 
-
     def forward(self, x):
         x = x.view(-1, 1, 28, 28)
         x = F.relu(self.bn1(self.conv1(x)))

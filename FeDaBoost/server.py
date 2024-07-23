@@ -1,6 +1,7 @@
 import torch
 from clients import Client
-from aggregators import fedAvg, fedProx
+from aggregators import fedAvg, fedProx, fedAdaBoost
+from utils import calculate_weights
 
 class Server:
     def __init__(self,rounds:int, stratergy:callable) -> None:
@@ -43,7 +44,7 @@ class Server:
         self.client_dict[client_id] = client
         
 
-    def __aggregate(self) -> None:
+    def __aggregate(self, weights = []) -> None:
         """
         Aggregate the models of the clients.
 
@@ -62,6 +63,8 @@ class Server:
             self.global_model = fedAvg(self.global_model, client_models)
         elif self.stratergy == "fedprox":
             self.global_model = fedProx(self.global_model, client_models)
+        elif self.stratergy == "fedaboost":
+            self.global_model = fedAdaBoost(self.global_model, client_models, weights)
         return self.global_model
 
 
@@ -111,7 +114,7 @@ class Server:
         consecutive_no_update_rounds = 0
 
         if self.stratergy == "fedaboost":
-            weights = [(1/len(self.clients)) for client in self.clients]
+            weights = [(1/len(self.client_dict)) for client in self.client_dict]
 
         for round in range(self.rounds):
             updated = False
@@ -119,14 +122,22 @@ class Server:
 
             if self.stratergy == "fedaboost":
                 local_loss = []
-                
+
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
+                if self.stratergy == "fedaboost":
+                    client_loss = client.evaluate()
+                    local_loss.append(client_loss)
                 client_model, client_loss = client.train()
                 self.__receive(client)
 
             m1_params = [p.clone() for p in self.global_model.parameters()]
-            self.global_model = self.__aggregate()
+
+            if self.stratergy == "fedaboost":
+                self.global_model = self.__aggregate(weights)
+            else:
+                self.global_model = self.__aggregate()
+
             m2_params = [p.clone() for p in self.global_model.parameters()]
 
             for p1, p2 in zip(m1_params, m2_params):
@@ -134,6 +145,9 @@ class Server:
                     updated = True
                     print("The global model parameters have been updated using", self.stratergy)
                     break
+                
+            if self.stratergy == "fedaboost":
+                weights = calculate_weights(weights, local_loss)
 
             self.__broadcast(self.global_model)
             

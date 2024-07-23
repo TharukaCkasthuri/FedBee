@@ -22,21 +22,16 @@ import torch
 import argparse
 import os
 
-import pandas as pd
-
-from tqdm import tqdm
 from enum import Enum
 
-from clients import Client, FlowerClient
+from clients import Client
 from server import Server
 from utils import get_device, get_client_ids
 
-from evals import evaluate
 from models.kv import ShallowNN
 from models.femnist import FEMNISTNet
 from models.mnist import MNISTNet
 
-from params import model_hparams
 from  aggregators import fedAvg,fedProx
 
 from datasets.kv.preprocess import KVDataSet
@@ -113,9 +108,7 @@ class Federation:
                 local_model=model,
             ))
 
-    def train(
-        self
-    ) -> tuple:
+    def train(self) -> tuple:
         """
         Training the model.
 
@@ -127,9 +120,9 @@ class Federation:
         ----------------
        
         """
-        self.server.train()
+        trained_model = self.server.train()
 
-        return None
+        return trained_model
 
     def save_models(self, model: torch.nn.Module, ckptpath: str) -> None:
         """
@@ -146,7 +139,6 @@ class Federation:
         ----------------
         None
         """
-
         if os.path.exists(ckptpath):
             torch.save(
                 model.state_dict(),
@@ -176,7 +168,7 @@ def dataset_enum(dataset_str):
 if __name__ == "__main__":
     device = get_device()
     parser = argparse.ArgumentParser(description="Federated training parameters")
-    parser.add_argument("--dataset", type=dataset_enum, default=Dataset.MNIST, help="Choose a dataset from the available options; femnist, mnist, kv")
+    parser.add_argument("--dataset", type=dataset_enum, default="mnist", help="Choose a dataset from the available options; femnist, mnist, kv")
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
@@ -196,8 +188,9 @@ if __name__ == "__main__":
     stratergy = args.stratergy
     train_data_dir = args.train_data_dir
     test_data_dir = args.test_data_dir
+    dataset = args.dataset
 
-    checkpt_path = f"checkpt/fedl/selected_/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
+    checkpt_path = f"checkpt/{stratergy}/{dataset.name}/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
 
     client_ids = get_client_ids(train_data_dir)
 
@@ -224,6 +217,7 @@ if __name__ == "__main__":
     start = time.time()
     trained_model = federation.train()
     model_path = f"{checkpt_path}/global_model.pth"
+    federation.save_models(trained_model, model_path)
     print("Federation with clients " + ", ".join(client_ids))
     print(
         "Approximate time taken to train",

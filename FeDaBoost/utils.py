@@ -177,7 +177,7 @@ def min_max_normalization(data, new_min=0, new_max=1):
     return normalized_data
 
 
-def calculate_weights(init_weights, top_eigens):
+def calculate_weights(init_weights, top_eigens, num_classes=10):
     """
     Calculate normalized weights for a list of weak classifiers in AdaBoost.
 
@@ -195,13 +195,14 @@ def calculate_weights(init_weights, top_eigens):
 
     alpha = []
     for i in range(num_classifiers):
-        # Avoid division by zero
-        if top_eigens[i] != 0 and top_eigens[i]!=1:
-            alpha.append(0.5 * np.log((1 - top_eigens[i]) / top_eigens[i]))
-        elif (top_eigens[i]==1):
-            alpha.append(0.5 * np.log((1 - 0.99999999) / 0.99999999))
+        # Avoid division by zero and log of zero
+        if top_eigens[i] != 0 and top_eigens[i] != 1:
+            alpha_value = 0.5 * np.log((1 - top_eigens[i]) / top_eigens[i]) + np.log(num_classes - 1)
+        elif top_eigens[i] == 1:
+            alpha_value = 0.5 * np.log((1 - 0.99999999) / 0.99999999) + np.log(num_classes - 1)
         else:
-            alpha.append(0)
+            alpha_value = 0
+        alpha.append(alpha_value)
     
     weights = [round(w * np.exp(-a),5) for w, a in zip(weights, alpha)]
     weights = [w / np.sum(weights) for w in weights]

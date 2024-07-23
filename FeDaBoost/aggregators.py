@@ -68,7 +68,6 @@ def fedProx(global_model: torch.nn.Module, local_models: List[torch.nn.Module], 
     global_model: torch.nn.Module object
         Updated global model.
     """
-
     state_dicts = [model.state_dict() for model in local_models]
     global_state_dict = global_model.state_dict()
 
@@ -89,25 +88,39 @@ def fedProx(global_model: torch.nn.Module, local_models: List[torch.nn.Module], 
     
     return global_model
 
-def fedaBoost(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float]):
+def fedAdaBoost(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float]):
+    """
+    FeDABoost algorithm. Returns the updated global model.
+    
+    Parameters:
+    ------------
+    global_model: torch.nn.Module object
+        Global model.
+    local_models: list
+        List of local models.
+    weights: list
+        List of weights for each local model.
+    
+    Returns:
+    ------------
+    global_model: torch.nn.Module object
+        Updated global model.
+    """
     state_dicts = [model.state_dict() for model in local_models]
+    weights = [round(weight,3) for weight in weights]
+
     for key in global_model.track_layers.keys():
-        # Stack the tensors and multiply each element by its corresponding weight
+
         stacked_weights = torch.stack(
             [item[str(key) + ".weight"] * weight for item, weight in zip(state_dicts, weights)]
         )
 
-        # Take the weighted mean along the specified dimension
         global_model.track_layers[key].weight.data = stacked_weights.sum(dim=0) / sum(weights)
 
-        # Repeat the process for bias
         stacked_biases = torch.stack(
             [item[str(key) + ".bias"] * weight for item, weight in zip(state_dicts, weights)]
         )
-        global_model.track_layers[key].bias.data = stacked_biases.sum(dim=0) / sum(weights)
 
-        weights = calculate_weights(weights, top_eigens)
-        
-        return global_model, weights
+        global_model.track_layers[key].bias.data = stacked_biases.sum(dim=0) / sum(weights)
             
-    pass
+    return global_model

@@ -231,8 +231,6 @@ class Federation:
             state_dicts = [model.state_dict() for model in local_models]
             weights = [round(weight,3) for weight in weights]
 
-            print(weights)
-
             for key in model_layers:
                 # Stack the tensors and multiply each element by its corresponding weight
                 stacked_weights = torch.stack(
