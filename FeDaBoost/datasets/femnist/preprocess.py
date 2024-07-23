@@ -115,8 +115,13 @@ def main():
     min_samples = 1 * BATCH_SIZE
 
     parser = argparse.ArgumentParser(description="FEMNIST dataset preprocessing parameters")
-    parser.add_argument("--train_data_dir", type=str, default=os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','train'))
-    parser.add_argument("--test_data_dir", type=str, default=os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','test'))
+    parser.add_argument("--train_data_dir", type=str, 
+                        default=os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','train'), 
+                        help="Path to the training data directory")
+    parser.add_argument("--test_data_dir", type=str, 
+                        default=os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','test'),
+                        help="Path to the test data directory")
+    
     args = parser.parse_args()
     train_data_dir = args.train_data_dir
     test_data_dir = args.test_data_dir
@@ -126,7 +131,12 @@ def main():
     for client in train_clients:
         if len(train_data[client]['y']) < min_samples and len(test_data[client]['y']) < min_samples:
             continue
-        
+
+        if not os.path.exists("./trainpt"):
+            os.makedirs("./trainpt")
+        if not os.path.exists("./testpt"):
+            os.makedirs("./testpt")
+
         train_dataset = FEMNISTDataset(train_data[client])
         torch.save(train_dataset, "./trainpt/" + str(client) + ".pt")
         test_dataset = FEMNISTDataset(test_data[client])
@@ -149,8 +159,3 @@ def main():
     
 if __name__ == "__main__":
     main()
-    #train_data_dir = os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','train')
-    #test_data_dir = os.path.join('/Users/tak/Documents/BTH/','leaf','data','femnist','data','test')
-    #train_clients, train_groups, train_data, test_data = read_data(train_data_dir, test_data_dir)
-    #print(train_clients)
-    #print(train_data['f3866_43']['y'])

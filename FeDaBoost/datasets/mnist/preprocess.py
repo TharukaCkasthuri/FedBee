@@ -164,9 +164,6 @@ def build_dataset(data_dir, saving_dir) -> None:
 
         print(f"Saved { os.path.join(trainpt_dir, f"{id}.pt")} and {os.path.join(testpt_dir, f"{id}.pt")}")
 
-
-
-
 def main():
     parser = argparse.ArgumentParser(description="Preprocess the MNIST dataset.")
     parser.add_argument("--num_clients", type=int, default=20)

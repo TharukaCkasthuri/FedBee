@@ -23,6 +23,9 @@ import flwr as fl
 
 from torch.utils.data import DataLoader
 from utils import get_device
+from models.mnist import MNISTNet
+from datasets.mnist.preprocess import MNISTDataset
+from datasets.femnist.preprocess import FEMNISTDataset
 
 class Client:
     """
@@ -66,6 +69,7 @@ class Client:
         self.device = get_device()
         self.local_model = local_model
         self.local_model = local_model.to(self.device)
+        self.train_dataset = train_dataset
 
     def set_model(self, model_weights) -> None:
         """
@@ -75,26 +79,7 @@ class Client:
         ------------
         model_weights: dict; state dictionary of model weights
         """
-        # Get the parameters of the model before loading new weights
-        m1_params = [p.clone() for p in self.local_model.parameters()]
-
-        # Load the new weights into the model
         self.local_model.load_state_dict(model_weights)
-
-        # Get the parameters of the model after loading new weights
-        m2_params = list(self.local_model.parameters())
-
-        # Check if any parameters have changed
-        updated = False
-        for p1, p2 in zip(m1_params, m2_params):
-            if not torch.equal(p1.data, p2.data):
-                updated = True
-                print("False")
-                break
-
-        if not updated:
-            print("True")
-
 
     def get_model(self) -> object:
         """
@@ -126,7 +111,6 @@ class Client:
         model: torch.nn.Module object; trained model
         loss_avg: float; average loss
         """
-    
         train_losses = []
         for epoch in range(self.local_round):
             print("\n")
@@ -134,7 +118,14 @@ class Client:
             for batch_idx, (x, y) in enumerate(self.traindl):
                 x, y = x.to(self.device), y.to(self.device)
                 outputs = self.local_model(x)
-                y = y.view(-1, 1)
+
+                if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+                    y = y.view(-1)
+                elif isinstance(self.train_dataset, MNISTDataset):
+                    y = torch.argmax(y, dim=1)
+                else:
+                    y = y.view(-1, 1)
+
                 loss = self.loss_fn(outputs, y)
                 self.local_model.zero_grad()
                 loss.backward()
@@ -166,7 +157,12 @@ class Client:
         batch_loss = []
         for _, (x, y) in enumerate(self.valdl):
             outputs = self.local_model(x)
-            y = y.view(-1, 1)
+            if isinstance(loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+                y = y.view(-1)
+            elif isinstance(self.train_dataset, MNISTDataset):
+                y = torch.argmax(y, dim=1)
+            else:
+                y = y.view(-1, 1)
             loss = loss_fn(outputs, y)
             batch_loss.append(loss.item())
         loss_avg = sum(batch_loss) / len(batch_loss)

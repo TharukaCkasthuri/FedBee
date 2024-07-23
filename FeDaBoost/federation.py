@@ -17,26 +17,31 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
 Published in: 
 """
-
 import time
 import torch
 import argparse
 import os
 
 import pandas as pd
+
 from tqdm import tqdm
+from enum import Enum
 
 from clients import Client, FlowerClient
 from server import Server
 from utils import get_device, get_client_ids
+
 from evals import evaluate
 from models.kv import ShallowNN
-from models.femnist import SimpleNet
+from models.femnist import FEMNISTNet
+from models.mnist import MNISTNet
+
 from params import model_hparams
 from  aggregators import fedAvg,fedProx
 
 from datasets.kv.preprocess import KVDataSet
 from datasets.femnist.preprocess import FEMNISTDataset
+from datasets.mnist.preprocess import MNISTDataset
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -56,7 +61,8 @@ class Federation:
         Number of global rounds.
     stratergy: callable;
         Federated learning averaging stratergy.
-
+    local_rounds: int;
+        Number of local rounds.
 
     Methods:
     ----------
@@ -75,6 +81,8 @@ class Federation:
         client_ids: list,
         model: torch.nn.Module,
         loss_fn: torch.nn.Module,
+        train_data_dir: str,
+        test_data_dir: str,
         global_rounds: int,
         stratergy: callable,
         local_rounds: int,
@@ -95,14 +103,14 @@ class Federation:
         for id in client_ids:
             self.server.connect_client(Client(
                 id,
-                torch.load(f"datasets/femnist/trainpt/{id}.pt"),
-                torch.load(f"datasets/femnist/testpt/{id}.pt"),
+                torch.load(f"{train_data_dir}/{id}.pt"),
+                torch.load(f"{test_data_dir}/{id}.pt"),
                 self.loss_fn,
-                32,
-                0.01,
-                0.01,
+                16,
+                0.001,
+                0.001,
                 self.local_rounds,
-                local_model=SimpleNet(62),
+                local_model=model,
             ))
 
     def train(
@@ -119,11 +127,9 @@ class Federation:
         ----------------
        
         """
-
         self.server.train()
 
         return None
-
 
     def save_models(self, model: torch.nn.Module, ckptpath: str) -> None:
         """
@@ -153,37 +159,63 @@ class Federation:
                 ckptpath,
             )
 
+class Dataset(Enum):
+    FEMNIST = "femnist"
+    MNIST = "mnist"
+    KV = "kv"
+
+def dataset_enum(dataset_str):
+    """
+    Returns the dataset enum.
+    """
+    try:
+        return Dataset(dataset_str.lower())
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid dataset. Choose from: {', '.join([dataset.value for dataset in Dataset])}")
 
 if __name__ == "__main__":
     device = get_device()
     parser = argparse.ArgumentParser(description="Federated training parameters")
-    parser.add_argument("--loss_function", type=str, default="L1Loss")
+    parser.add_argument("--dataset", type=dataset_enum, default=Dataset.MNIST, help="Choose a dataset from the available options; femnist, mnist, kv")
+    parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
+    parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
+    parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
+    parser.add_argument("--stratergy", type=str, default="fedavg")
     parser.add_argument("--log_summary", action="store_true")
-    parser.add_argument("--global_rounds", type=int, default=2)
+    parser.add_argument("--global_rounds", type=int, default=30)
     parser.add_argument("--local_rounds", type=int, default=10)
     parser.add_argument("--save_ckpt", action="store_true")
     args = parser.parse_args()
 
-
-    # Hyper Parameters
     loss_fn = getattr(torch.nn, args.loss_function)()
     log_summary = args.log_summary
     global_rounds = args.global_rounds
     local_rounds = args.local_rounds
     epochs = global_rounds * local_rounds
     save_ckpt = args.save_ckpt
+    stratergy = args.stratergy
+    train_data_dir = args.train_data_dir
+    test_data_dir = args.test_data_dir
 
     checkpt_path = f"checkpt/fedl/selected_/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
 
-    client_ids = get_client_ids("datasets/femnist/trainpt")[0:10]
-    model = SimpleNet(62)
+    client_ids = get_client_ids(train_data_dir)
+
+    if args.dataset == Dataset.FEMNIST:
+        model = FEMNISTNet(62)
+    elif args.dataset == Dataset.MNIST:
+        model = MNISTNet()
+    elif args.dataset == Dataset.KV:
+        model = ShallowNN(176)
 
     federation = Federation(
         client_ids,
         model,
         loss_fn,
+        train_data_dir,
+        test_data_dir,
         global_rounds,
-        "fedavg",
+        stratergy,
         local_rounds,
     )
     

@@ -22,9 +22,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class SimpleNet(nn.Module):
+class FEMNISTNet(nn.Module):
     def __init__(self, num_classes):
-        super(SimpleNet, self).__init__()
+        super(FEMNISTNet, self).__init__()
         self.num_classes = num_classes
         self.conv1 = nn.Conv2d(1, 8, kernel_size=5, padding=2)
         self.fc1 = nn.Linear(14*14*8, self.num_classes)
