@@ -101,8 +101,8 @@ class Federation:
                 torch.load(f"{train_data_dir}/{id}.pt"),
                 torch.load(f"{test_data_dir}/{id}.pt"),
                 self.loss_fn,
-                16,
-                0.001,
+                32,
+                0.0001,
                 0.001,
                 self.local_rounds,
                 local_model=model,
@@ -172,9 +172,9 @@ if __name__ == "__main__":
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
-    parser.add_argument("--stratergy", type=str, default="fedavg")
+    parser.add_argument("--stratergy", type=str, default="fedaboost")
     parser.add_argument("--log_summary", action="store_true")
-    parser.add_argument("--global_rounds", type=int, default=30)
+    parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
     parser.add_argument("--save_ckpt", action="store_true")
     args = parser.parse_args()
