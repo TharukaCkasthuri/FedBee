@@ -129,33 +129,31 @@ def main():
     train_clients, train_groups, train_data, test_data = read_data(train_data_dir, test_data_dir)
 
     for client in train_clients:
-        if len(train_data[client]['y']) < min_samples and len(test_data[client]['y']) < min_samples:
-            continue
+        if len(train_data[client]['y']) > min_samples and len(test_data[client]['y']) > min_samples:
+            if not os.path.exists("./trainpt"):
+                os.makedirs("./trainpt")
+            if not os.path.exists("./testpt"):
+                os.makedirs("./testpt")
 
-        if not os.path.exists("./trainpt"):
-            os.makedirs("./trainpt")
-        if not os.path.exists("./testpt"):
-            os.makedirs("./testpt")
+            train_dataset = FEMNISTDataset(train_data[client])
+            torch.save(train_dataset, "./trainpt/" + str(client) + ".pt")
+            test_dataset = FEMNISTDataset(test_data[client])
+            torch.save(test_dataset, "./testpt/" + str(client) + ".pt")
 
-        train_dataset = FEMNISTDataset(train_data[client])
-        torch.save(train_dataset, "./trainpt/" + str(client) + ".pt")
-        test_dataset = FEMNISTDataset(test_data[client])
-        torch.save(test_dataset, "./testpt/" + str(client) + ".pt")
+            train_path = f"./trainpt/{client}.pt"
+            test_path  = f"./testpt/{client}.pt"
 
-        train_path = f"./trainpt/{client}.pt"
-        test_path  = f"./testpt/{client}.pt"
+            if os.path.exists(train_path):
+                torch.save(train_dataset, train_path)
+            else:
+                os.makedirs(os.path.dirname(train_path), exist_ok=True)
+                torch.save(train_dataset, train_path)
 
-        if os.path.exists(train_path):
-            torch.save(train_dataset, train_path)
-        else:
-            os.makedirs(os.path.dirname(train_path), exist_ok=True)
-            torch.save(train_dataset, train_path)
-
-        if os.path.exists(test_path):
-            torch.save(test_dataset, test_path)
-        else:
-            os.makedirs(os.path.dirname(test_path), exist_ok=True)
-            torch.save(test_dataset, test_path)
+            if os.path.exists(test_path):
+                torch.save(test_dataset, test_path)
+            else:
+                os.makedirs(os.path.dirname(test_path), exist_ok=True)
+                torch.save(test_dataset, test_path)
     
 if __name__ == "__main__":
     main()
