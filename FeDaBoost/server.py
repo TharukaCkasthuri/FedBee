@@ -1,4 +1,7 @@
 import torch
+import os
+import pandas as pd
+
 from clients import Client
 from aggregators import fedAvg, fedProx, fedAdaBoost
 from utils import calculate_weights
@@ -112,6 +115,9 @@ class Server:
             Trained model
         """
         consecutive_no_update_rounds = 0
+        consecutive_loss_change_rounds = 0
+        prev_global_loss = 999999999
+        stats = []
 
         if self.stratergy == "fedaboost":
             weights = [(1/len(self.client_dict)) for client in self.client_dict]
@@ -120,34 +126,40 @@ class Server:
             updated = False
             print(f"\n | Global Training Round : {round+1} |\n")
 
-            if self.stratergy == "fedaboost":
-                local_loss = []
-
+            local_loss = []
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
-                if self.stratergy == "fedaboost":
-                    client_loss = client.evaluate()
-                    local_loss.append(client_loss)
+                
+                client_loss = client.evaluate()
+                local_loss.append(client_loss)
+
                 client_model, client_loss = client.train()
                 self.__receive(client)
 
-            m1_params = [p.clone() for p in self.global_model.parameters()]
+            prev_params = [p.clone() for p in self.global_model.parameters()]
 
             if self.stratergy == "fedaboost":
                 self.global_model = self.__aggregate(weights)
             else:
                 self.global_model = self.__aggregate()
 
-            m2_params = [p.clone() for p in self.global_model.parameters()]
+            updated_params = [p.clone() for p in self.global_model.parameters()]
 
-            for p1, p2 in zip(m1_params, m2_params):
-                if not torch.equal(p1.data, p2.data):
-                    updated = True
-                    print("The global model parameters have been updated using", self.stratergy)
-                    break
-                
+            updated = self.__check_model_update(prev_params, updated_params)
+            print(f"Model Updated: {updated}")
+
+            global_loss = sum(local_loss) / len(local_loss)
+            print(f"Global Loss : {global_loss}")
+            if abs(global_loss - prev_global_loss) < 0.0001:
+                consecutive_loss_change_rounds += 1
+
+            if consecutive_loss_change_rounds == 3:
+                print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
+                break
+
             if self.stratergy == "fedaboost":
                 weights = calculate_weights(weights, local_loss)
+                stats.append(self.__collect_stats(local_loss, weights))
 
             self.__broadcast(self.global_model)
             
@@ -161,4 +173,97 @@ class Server:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
 
+            if self.stratergy == "fedaboost":
+                file_name = "stats/fedaboost_stats.csv"
+                self.__save_stats(stats, file_name)
+                print(f"Saved the training statistics to {file_name}")
         return self.global_model
+    
+    def __check_convergence(self, global_loss: float, prev_global_loss: float) -> bool:
+        """
+        Check if the training has converged.
+
+        Parameters:
+        ----------------
+        global_loss: float
+            Current global loss
+        prev_global_loss: float
+            Previous global loss
+
+        Returns:
+        ----------------
+        bool
+            True if converged, False otherwise
+        """
+        if abs(global_loss - prev_global_loss) < 0.0001:
+            self.consecutive_loss_change_rounds += 1
+            if self.consecutive_loss_change_rounds == 3:
+                print("The global model parameters have not changed significantly for 3 consecutive rounds, training has converged.")
+                return True
+        else:
+            self.consecutive_loss_change_rounds = 0
+        return False
+    
+    def __collect_stats(self, local_loss: list, weights: list) -> dict:
+        """
+        Collect training statistics.
+
+        Parameters:
+        ----------------
+        local_loss: list
+            List of client losses
+        weights: list
+            List of weights for clients
+
+        Returns:
+        ----------------
+        dict
+            Dictionary containing training statistics
+        """
+        stats = {f"{client.client_id}-loss": local_loss[i] for i, client in enumerate(self.client_dict.values())}
+        stats.update({f"{client.client_id}-weight": weights[i] for i, client in enumerate(self.client_dict.values())})
+        return stats
+    
+    def __save_stats(self, stats: list, path: str) -> None:
+        """
+        Save training statistics to a CSV file.
+
+        Parameters:
+        ----------------
+        stats: list
+            List of training statistics
+        path: str
+            Path to save the CSV file
+
+        Returns:
+        ----------------
+        None
+        """
+        stats_df = pd.DataFrame(stats)
+        directory = os.path.dirname(path)
+        
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+            
+        stats_df.to_csv(path, index=False)
+
+    def __check_model_update(self, prev_params: list, updated_params: list) -> bool:
+        """
+        Check if the model parameters have been updated.
+
+        Parameters:
+        ----------------
+        prev_params: list
+            List of previous model parameters
+        updated_params: list
+            List of updated model parameters
+
+        Returns:
+        ----------------
+        bool
+            True if updated, False otherwise
+        """
+        for prev_param, updated_param in zip(prev_params, updated_params):
+            if not torch.equal(prev_param, updated_param):
+                return True
+        return False
