@@ -94,7 +94,7 @@ class Client:
         """
         return self.local_model
 
-    def train(self) -> tuple:
+    def train(self, global_round) -> tuple:
         """
         Training the model.
     
@@ -136,7 +136,7 @@ class Client:
             train_losses.append(loss_avg)
     
             print(
-                f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg}"
+                f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round}"
             )
         return self.local_model, train_losses 
 

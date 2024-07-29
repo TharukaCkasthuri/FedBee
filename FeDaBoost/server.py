@@ -3,7 +3,7 @@ import os
 import pandas as pd
 
 from clients import Client
-from aggregators import fedAvg, fedProx, fedAdaBoost
+from aggregators import fedAvg, fedProx, weighted_avg
 from utils import calculate_weights
 
 class Server:
@@ -67,11 +67,11 @@ class Server:
         elif self.stratergy == "fedprox":
             self.global_model = fedProx(self.global_model, client_models)
         elif self.stratergy == "fedaboost":
-            self.global_model = fedAdaBoost(self.global_model, client_models, weights)
+            self.global_model = weighted_avg(self.global_model, client_models, weights)
         return self.global_model
 
 
-    def __broadcast(self, model: torch.nn.Module) -> None:
+    def _broadcast(self, model: torch.nn.Module) -> None:
         """
         Broadcast the model to the clients.
 
@@ -87,7 +87,7 @@ class Server:
             print(f"Broadcasted model to client {client.client_id}")
 
 
-    def __receive(self, client:callable) -> list:
+    def _receive(self, client:callable) -> list:
         """
         Receive the models from the clients.
 
@@ -122,7 +122,7 @@ class Server:
         if self.stratergy == "fedaboost":
             weights = [(1/len(self.client_dict)) for client in self.client_dict]
 
-        for round in range(self.rounds):
+        for round in range(1,self.rounds+1):
             updated = False
             print(f"\n | Global Training Round : {round+1} |\n")
 
@@ -133,7 +133,7 @@ class Server:
                 client_loss = client.evaluate()
                 local_loss.append(client_loss)
 
-                client_model, client_loss = client.train()
+                client_model, client_loss = client.train(round)
                 self.__receive(client)
 
             prev_params = [p.clone() for p in self.global_model.parameters()]
@@ -204,7 +204,7 @@ class Server:
             self.consecutive_loss_change_rounds = 0
         return False
     
-    def __collect_stats(self, local_loss: list, weights: list) -> dict:
+    def _collect_stats(self, local_loss: list, weights: list) -> dict:
         """
         Collect training statistics.
 
@@ -224,7 +224,7 @@ class Server:
         stats.update({f"{client.client_id}-weight": weights[i] for i, client in enumerate(self.client_dict.values())})
         return stats
     
-    def __save_stats(self, stats: list, path: str) -> None:
+    def _save_stats(self, stats: list, path: str) -> None:
         """
         Save training statistics to a CSV file.
 
@@ -247,7 +247,7 @@ class Server:
             
         stats_df.to_csv(path, index=False)
 
-    def __check_model_update(self, prev_params: list, updated_params: list) -> bool:
+    def _check_model_update(self, prev_params: list, updated_params: list) -> bool:
         """
         Check if the model parameters have been updated.
 

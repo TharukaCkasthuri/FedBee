@@ -88,10 +88,10 @@ def fedProx(global_model: torch.nn.Module, local_models: List[torch.nn.Module], 
     
     return global_model
 
-def fedAdaBoost(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float]):
+def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float]):
     """
-    FeDABoost algorithm. Returns the updated global model.
-    
+    Average model parameters using weighted averaging.
+        
     Parameters:
     ------------
     global_model: torch.nn.Module object

@@ -26,6 +26,7 @@ from enum import Enum
 
 from clients import Client
 from server import Server
+from rl_server import RLServer
 from utils import get_device, get_client_ids
 
 from models.kv import ShallowNN
@@ -90,8 +91,12 @@ class Federation:
         self.local_rounds = local_rounds
         self.stratergy = stratergy
 
-        # Initialize the server
-        self.server = Server(global_rounds,stratergy)
+        # Initialize the server, and the clients. 
+        if stratergy == "rl":
+            self.server = RLServer(global_rounds,stratergy)
+        else:
+            self.server = Server(global_rounds,stratergy)
+
         self.server.init_model(model)
 
         # Set up the clients
@@ -101,7 +106,7 @@ class Federation:
                 torch.load(f"{train_data_dir}/{id}.pt"),
                 torch.load(f"{test_data_dir}/{id}.pt"),
                 self.loss_fn,
-                32,
+                16,
                 0.0001,
                 0.001,
                 self.local_rounds,
@@ -118,7 +123,8 @@ class Federation:
 
         Returns:
         ----------------
-       
+        trained_model: torch.nn.Module;
+            Trained model.
         """
         trained_model = self.server.train()
 
@@ -159,6 +165,11 @@ class Dataset(Enum):
 def dataset_enum(dataset_str):
     """
     Returns the dataset enum.
+
+    Parameters:
+    ----------------
+    dataset_str: str;
+        Dataset string.
     """
     try:
         return Dataset(dataset_str.lower())
@@ -172,7 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
-    parser.add_argument("--stratergy", type=str, default="fedaboost")
+    parser.add_argument("--stratergy", type=str, default="rl")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
@@ -181,6 +192,8 @@ if __name__ == "__main__":
 
     loss_fn = getattr(torch.nn, args.loss_function)()
     log_summary = args.log_summary
+
+
     global_rounds = args.global_rounds
     local_rounds = args.local_rounds
     epochs = global_rounds * local_rounds
