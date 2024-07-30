@@ -7,6 +7,39 @@ from aggregators import fedAvg, fedProx, weighted_avg
 from utils import calculate_weights
 
 class Server:
+
+    """
+    The federated learning server class. 
+    
+    Parameters:
+    ----------------
+    rounds: int;
+        Number of global rounds
+    stratergy: callable;
+        Averaging stratergy for federated learning.
+    
+    Methods:
+    ----------------
+    init_model(self, model: torch.nn.Module) -> None:
+        Initialize the model for federated learning.
+    connect_client(self, client: Client) -> None:
+        Add a client for federated learning setup.
+    __aggregate(self, weights = []) -> None:
+        Aggregate the models of the clients.
+    _broadcast(self, model: torch.nn.Module) -> None:
+        Broadcast the model to the clients.
+    _receive(self, client:callable) -> list:
+        Receive the models from the clients.
+    train(self) -> None:
+        Train the model using federated learning.
+    _collect_stats(self, local_loss: list, weights: list) -> dict:
+        Collect training statistics.
+    _save_stats(self, stats: list, path: str) -> None:
+        Save training statistics to a CSV file.
+    _check_model_update(self, prev_params: list, updated_params: list) -> bool:
+        Check if the model parameters have been updated.
+    """
+
     def __init__(self,rounds:int, stratergy:callable) -> None:
         self.rounds = rounds
         self.stratergy = stratergy
@@ -134,7 +167,7 @@ class Server:
                 local_loss.append(client_loss)
 
                 client_model, client_loss = client.train(round)
-                self.__receive(client)
+                self._receive(client)
 
             prev_params = [p.clone() for p in self.global_model.parameters()]
 
@@ -145,7 +178,7 @@ class Server:
 
             updated_params = [p.clone() for p in self.global_model.parameters()]
 
-            updated = self.__check_model_update(prev_params, updated_params)
+            updated = self._check_model_update(prev_params, updated_params)
             print(f"Model Updated: {updated}")
 
             global_loss = sum(local_loss) / len(local_loss)
@@ -159,9 +192,9 @@ class Server:
 
             if self.stratergy == "fedaboost":
                 weights = calculate_weights(weights, local_loss)
-                stats.append(self.__collect_stats(local_loss, weights))
+                stats.append(self._collect_stats(local_loss, weights))
 
-            self.__broadcast(self.global_model)
+            self._broadcast(self.global_model)
             
             if not updated:
                 consecutive_no_update_rounds += 1
@@ -173,10 +206,11 @@ class Server:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
 
-            if self.stratergy == "fedaboost":
-                file_name = "stats/fedaboost_stats.csv"
-                self.__save_stats(stats, file_name)
-                print(f"Saved the training statistics to {file_name}")
+        if self.stratergy == "fedaboost":
+            file_name = "stats/fedaboost_stats_femnist.csv"
+            self._save_stats(stats, file_name)
+            print(f"Saved the training statistics to {file_name}")
+
         return self.global_model
     
     def __check_convergence(self, global_loss: float, prev_global_loss: float) -> bool:

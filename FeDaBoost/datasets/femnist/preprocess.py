@@ -111,7 +111,7 @@ class FEMNISTDataset(Dataset):
 
 def main():
 
-    BATCH_SIZE = 32
+    BATCH_SIZE = 16
     min_samples = 1 * BATCH_SIZE
 
     parser = argparse.ArgumentParser(description="FEMNIST dataset preprocessing parameters")

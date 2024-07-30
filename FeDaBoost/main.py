@@ -180,14 +180,15 @@ if __name__ == "__main__":
     device = get_device()
     parser = argparse.ArgumentParser(description="Federated training parameters")
     parser.add_argument("--dataset", type=dataset_enum, default="mnist", help="Choose a dataset from the available options; femnist, mnist, kv")
-    parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
-    parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
+    parser.add_argument("--train_data_dir", type=str, default="datasets/femnist/trainpt", help="Path to the training data directory")
+    parser.add_argument("--test_data_dir", type=str, default="datasets/femnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
-    parser.add_argument("--stratergy", type=str, default="rl")
+    parser.add_argument("--stratergy", type=str, default="fedaboost", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
     parser.add_argument("--save_ckpt", action="store_true")
+
     args = parser.parse_args()
 
     loss_fn = getattr(torch.nn, args.loss_function)()
