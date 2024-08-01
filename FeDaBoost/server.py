@@ -6,6 +6,8 @@ from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
 from utils import calculate_weights
 
+from torch.utils.tensorboard import SummaryWriter
+
 class Server:
 
     """
@@ -40,10 +42,13 @@ class Server:
         Check if the model parameters have been updated.
     """
 
-    def __init__(self,rounds:int, stratergy:callable) -> None:
+    def __init__(self,rounds:int, stratergy:callable, log_dir:str = 'runs') -> None:
         self.rounds = rounds
         self.stratergy = stratergy
         self.client_dict = {}
+
+        # Initialize TensorBoard writer
+        self.writer = SummaryWriter(log_dir=log_dir)
 
     def init_model(self, model: torch.nn.Module) -> None:
         """
@@ -183,6 +188,10 @@ class Server:
 
             global_loss = sum(local_loss) / len(local_loss)
             print(f"Global Loss : {global_loss}")
+
+            # Log the global loss to TensorBoard
+            self.writer.add_scalar('Loss/Validation', global_loss, round)
+
             if abs(global_loss - prev_global_loss) < 0.0001:
                 consecutive_loss_change_rounds += 1
 
@@ -207,10 +216,13 @@ class Server:
                 break
 
         if self.stratergy == "fedaboost":
-            file_name = "stats/fedaboost_stats_femnist.csv"
+            file_name = "stats/fedaboost_stats_mnist.csv"
             self._save_stats(stats, file_name)
             print(f"Saved the training statistics to {file_name}")
 
+        # Close the TensorBoard writer
+        self.writer.close()
+        
         return self.global_model
     
     def __check_convergence(self, global_loss: float, prev_global_loss: float) -> bool:

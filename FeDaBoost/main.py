@@ -39,8 +39,6 @@ from datasets.kv.preprocess import KVDataSet
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
 
-from torch.utils.tensorboard import SummaryWriter
-
 class Federation:
     """
     Class for federated learning.
@@ -107,7 +105,7 @@ class Federation:
                 torch.load(f"{test_data_dir}/{id}.pt"),
                 self.loss_fn,
                 16,
-                0.0001,
+                0.00001,
                 0.001,
                 self.local_rounds,
                 local_model=model,
@@ -183,7 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_data_dir", type=str, default="datasets/femnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/femnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
-    parser.add_argument("--stratergy", type=str, default="fedaboost", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
+    parser.add_argument("--stratergy", type=str, default="fedavg", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
