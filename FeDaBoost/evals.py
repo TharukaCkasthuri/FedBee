@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
 Published in: 
 """
-
+import nn
 import torch
 import numpy as np
 
@@ -54,6 +54,7 @@ def evaluate(
         Average mean absolute error.
 
     """
+    model.eval()
     testdl = DataLoader(test_data, 32, shuffle=True, drop_last=True)
     batch_loss = []
     for _, (x, y) in enumerate(testdl):
@@ -139,3 +140,44 @@ def evaluate_mae_with_confidence(
     bootstrap_mae_std = np.std(bootstrap_mae)
 
     return avg_mae, (lower_mae, upper_mae), bootstrap_mae_std
+
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for imbalanced datasets.
+    
+    Parameters:
+    ------------
+    gamma: float;
+        Focusing parameter. Default is 2.
+    alpha: float;
+        Weighting parameter. Default is 0.25.
+
+    Returns:
+    ------------
+    loss: float;
+        Focal loss
+    
+    """
+    def __init__(self, gamma=2., alpha=0.25):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+
+    def forward(self, y_pred, y_true):
+        """
+        Calculate the focal loss.
+        
+        Parameters:
+        ------------
+        y_pred: torch.tensor object;
+            Predicted values.
+        y_true: torch.tensor object;
+            True values.
+        """
+        epsilon = 1e-8
+        y_pred = torch.clamp(y_pred, epsilon, 1. - epsilon)
+        alpha_t = self.alpha * y_true
+        p_t = y_true * y_pred
+        focal_loss = -alpha_t * (1 - p_t) ** self.gamma * torch.log(p_t)
+        return focal_loss.sum(dim=1).mean()

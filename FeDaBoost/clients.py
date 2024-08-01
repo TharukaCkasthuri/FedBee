@@ -21,7 +21,7 @@ Published in:
 import torch
 import flwr as fl
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from utils import get_device
 from datasets.mnist.preprocess import MNISTDataset
 from datasets.femnist.preprocess import FEMNISTDataset
@@ -59,6 +59,7 @@ class Client:
         self.traindl = DataLoader(
             train_dataset, batch_size, shuffle=True, drop_last=True
         )
+
         self.valdl = DataLoader(test_dataset, batch_size, shuffle=True, drop_last=True)
         self.optimizer = torch.optim.SGD(
             local_model.parameters(),
