@@ -206,5 +206,6 @@ def calculate_weights(init_weights, error_fun, num_classes=10):
     
     weights = [round(w * np.exp(-a),5) for w, a in zip(weights, alpha)]
     weights = [w / np.sum(weights) for w in weights]
+    alpha = [a / np.sum(alpha) for a in alpha]
 
-    return weights
+    return alpha
