@@ -99,6 +99,9 @@ class Server:
         model: torch.nn.Module object;
             Aggregated model
         """
+
+        prev_params = [p.clone() for p in self.global_model.parameters()]
+
         client_models = [client.get_model() for client in self.client_dict.values()]
         if self.stratergy == "fedavg":
             self.global_model = fedAvg(self.global_model, client_models)
@@ -106,7 +109,12 @@ class Server:
             self.global_model = fedProx(self.global_model, client_models)
         elif self.stratergy == "fedaboost":
             self.global_model = weighted_avg(self.global_model, client_models, weights)
-        return self.global_model
+
+        updated_params = [p.clone() for p in self.global_model.parameters()]
+
+        updated = self._check_model_update(prev_params, updated_params)
+
+        return self.global_model, updated
 
 
     def _broadcast(self, model: torch.nn.Module) -> None:
@@ -161,36 +169,31 @@ class Server:
             weights = [(1/len(self.client_dict)) for client in self.client_dict]
 
         for round in range(1,self.rounds+1):
-            updated = False
-            print(f"\n | Global Training Round : {round+1} |\n")
+            update_status = False
+            print(f"\n | Global Training Round : {round} |\n")
 
             local_loss = []
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
-                
                 client_loss = client.evaluate()
                 local_loss.append(client_loss)
 
                 client_model, client_loss = client.train(round)
                 self._receive(client)
 
-            prev_params = [p.clone() for p in self.global_model.parameters()]
-
             if self.stratergy == "fedaboost":
-                self.global_model = self.__aggregate(weights)
+                self.global_model, update_status = self.__aggregate(weights)
             else:
-                self.global_model = self.__aggregate()
+                self.global_model, update_status = self.__aggregate()
 
-            updated_params = [p.clone() for p in self.global_model.parameters()]
-
-            updated = self._check_model_update(prev_params, updated_params)
-            print(f"Model Updated: {updated}")
+            print(f"Model Updated: {update_status}")
 
             global_loss = sum(local_loss) / len(local_loss)
             print(f"Global Loss : {global_loss}")
 
             # Log the global loss to TensorBoard
-            self.writer.add_scalar('Loss/Validation', global_loss, round)
+            # Log metrics to TensorBoard
+            self.writer.add_scalar('Global_Loss', global_loss, round)
 
             if abs(global_loss - prev_global_loss) < 0.0001:
                 consecutive_loss_change_rounds += 1
@@ -205,7 +208,7 @@ class Server:
 
             self._broadcast(self.global_model)
             
-            if not updated:
+            if not update_status:
                 consecutive_no_update_rounds += 1
                 print("The global model parameters have not been updated, so the training has converged.")
             else:
@@ -222,7 +225,7 @@ class Server:
 
         # Close the TensorBoard writer
         self.writer.close()
-        
+
         return self.global_model
     
     def __check_convergence(self, global_loss: float, prev_global_loss: float) -> bool:
