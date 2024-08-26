@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader, Subset
 from utils import get_device
 from datasets.mnist.preprocess import MNISTDataset
 from datasets.femnist.preprocess import FEMNISTDataset
+from sklearn.metrics import f1_score
 
 class Client:
     """
@@ -60,7 +61,7 @@ class Client:
             train_dataset, batch_size, shuffle=True, drop_last=True
         )
 
-        self.valdl = DataLoader(test_dataset, batch_size, shuffle=False, drop_last=True)
+        self.valdl = DataLoader(test_dataset, 8, shuffle=False, drop_last=True)
         self.optimizer = torch.optim.SGD(
             local_model.parameters(),
             lr=learning_rate,
@@ -95,7 +96,7 @@ class Client:
         """
         return self.local_model
 
-    def train(self, global_round) -> tuple:
+    def train(self, global_round, weight:float=1) -> tuple:
         """
         Training the model.
     
@@ -127,6 +128,8 @@ class Client:
                     y = y.view(-1, 1)
 
                 loss = self.loss_fn(outputs, y)
+                loss = weight * loss
+
                 self.local_model.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -141,7 +144,7 @@ class Client:
             )
         return self.local_model, train_losses 
 
-    def evaluate(self) -> float:
+    def evaluate(self) -> tuple:
         """
         Evaluate the model with validation dataset.
 
@@ -153,8 +156,11 @@ class Client:
         Returns:
         ------------
         loss_avg: float; average loss
+        f1_avg: float; average F1 score
         """
         batch_loss = []
+        all_preds = []
+        all_labels = []
 
         for _, (x, y) in enumerate(self.valdl):
             x, y = x.to(self.device), y.to(self.device)
@@ -165,11 +171,18 @@ class Client:
                 y = torch.argmax(y, dim=1)
             else:
                 y = y.view(-1, 1)
+            
             loss = self.loss_fn(outputs, y)
             batch_loss.append(loss.item())
+            preds = torch.argmax(outputs, dim=1)
+            
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(y.cpu().numpy())
+        
         loss_avg = sum(batch_loss) / len(batch_loss)
-
-        return loss_avg
+        f1_avg = f1_score(all_labels, all_preds, average='macro') 
+        
+        return loss_avg, f1_avg
 
 class FlowerClient(fl.client.NumPyClient):
     def __init__(self, client: Client):

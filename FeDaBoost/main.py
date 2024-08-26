@@ -25,8 +25,8 @@ import os
 from enum import Enum
 
 from clients import Client
-from server import Server
-from rl_server import RLServer
+from boost_server import Server
+#from rl_server import RLServer
 from utils import get_device, get_client_ids
 
 from models.kv import ShallowNN
@@ -91,7 +91,8 @@ class Federation:
 
         # Initialize the server, and the clients. 
         if stratergy == "rl":
-            self.server = RLServer(global_rounds,stratergy)
+            pass
+            #self.server = RLServer(global_rounds,stratergy)
         else:
             self.server = Server(global_rounds,stratergy)
 
@@ -104,9 +105,9 @@ class Federation:
                 torch.load(f"{train_data_dir}/{id}.pt"),
                 torch.load(f"{test_data_dir}/{id}.pt"),
                 self.loss_fn,
-                16,
+                32,
                 0.00001,
-                0.001,
+                0.01,
                 self.local_rounds,
                 local_model=model,
             ))
@@ -182,9 +183,9 @@ if __name__ == "__main__":
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
-    parser.add_argument("--stratergy", type=str, default="fedavg", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
+    parser.add_argument("--stratergy", type=str, default="fedaboost", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
-    parser.add_argument("--global_rounds", type=int, default=150)
+    parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
     parser.add_argument("--save_ckpt", action="store_true")
 

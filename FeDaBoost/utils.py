@@ -177,35 +177,95 @@ def min_max_normalization(data, new_min=0, new_max=1):
     return normalized_data
 
 
-def calculate_weights(init_weights, error_fun, num_classes=10):
+def get_alpha_emp(error_fun: list, num_classes: int = 10, emphasis_factor: float = 3.0):
     """
-    Calculate normalized weights for a list of weak classifiers in AdaBoost.
+    Calculate adjusted weights for a list of weak classifiers in AdaBoost, 
+    giving higher weights to classifiers with lower errors.
 
     Parameters:
-    - init_weights: Initial weights (numpy array or list).
-    - top_eigens: List of top eigenvalues from weak classifiers.
+    - error_fun: List of errors for each weak classifier.
+    - num_classes: Number of classes (default is 10).
+    - emphasis_factor: A factor to increase the weight given to better-performing classifiers (default is 2.0).
 
     Returns:
-    - List of normalized weights for each weak classifier.
+    - List of adjusted weights for each weak classifier.
     """
+    # Normalize the errors
     errs = [w / np.sum(error_fun) for w in error_fun]
-    num_classifiers = len(init_weights)
-    
-    weights = np.array(init_weights)  # Initialize weights
+    num_classifiers = len(errs)
 
     alpha = []
     for i in range(num_classifiers):
         # Avoid division by zero and log of zero
         if errs[i] != 0 and errs[i] != 1:
-            alpha_value = 0.5 * np.log((1 - errs[i]) / errs[i]) + np.log(num_classes - 1)
+            # Increase the weight of better-performing classifiers using the emphasis factor
+            alpha_value = emphasis_factor * (0.5 * np.log((1 - errs[i]) / errs[i]) + np.log(num_classes - 1))
         elif errs[i] == 1:
-            alpha_value = 0.5 * np.log((1 - 0.99999999) / 0.99999999) + np.log(num_classes - 1)
+            alpha_value = emphasis_factor * (0.5 * np.log((1 - 0.99999999) / 0.99999999) + np.log(num_classes - 1))
         else:
             alpha_value = 0
         alpha.append(alpha_value)
     
-    weights = [round(w * np.exp(-a),5) for w, a in zip(weights, alpha)]
-    weights = [w / np.sum(weights) for w in weights]
-    alpha = [a / np.sum(alpha) for a in alpha]
+    # Normalize the alpha values to make them sum to 1
+    alpha = [w / np.sum(alpha) for w in alpha]
 
     return alpha
+
+
+def get_alpha(error_fun: dict, num_classes: int = 10):
+    """
+    Calculate adjusted weights for a set of weak classifiers in AdaBoost, 
+    giving higher weights to classifiers with lower errors.
+
+    Parameters:
+    - error_fun: Dictionary where keys are classifier identifiers and values are the errors for each weak classifier.
+    - num_classes: Number of classes (default is 10).
+
+    Returns:
+    - Dictionary with classifier identifiers as keys and their adjusted weights (alpha) as values.
+    """
+    # Extract errors from the dictionary and normalize them
+    errs = {key: error / np.sum(list(error_fun.values())) for key, error in error_fun.items()}
+    
+    # Initialize the dictionary to hold the alpha values
+    alpha = {}
+    
+    # Calculate the alpha values
+    for key, error in errs.items():
+        if error != 0 and error != 1:
+            alpha_value = 0.5 * np.log((1 - error) / error) + np.log(num_classes - 1)
+        elif error == 1:
+            alpha_value = 0.5 * np.log((1 - 0.99999999) / 0.99999999) + np.log(num_classes - 1)
+        else:
+            alpha_value = 0
+        alpha[key] = alpha_value
+    
+    # Normalize alpha values
+    alpha_sum = np.sum(list(alpha.values()))
+    alpha = {key: value / alpha_sum for key, value in alpha.items()}
+
+    return alpha
+
+
+def get_weights(alpha: dict, prev_weights: dict):
+    """
+    Calculate adjusted weights for a set of weak classifiers in AdaBoost, 
+    giving higher weights to classifiers with lower errors, and adjusting 
+    for previous weights.
+
+    Parameters:
+    - alpha: Dictionary of alpha values for each weak classifier.
+    - prev_weights: Dictionary of previous weights for each classifier.
+
+    Returns:
+    - Dictionary of updated weights for each weak classifier.
+    """
+    new_weights = {}
+    for key in prev_weights.keys():
+        new_weights[key] = prev_weights[key] * np.exp(-alpha[key])
+
+    weight_sum = np.sum(list(new_weights.values()))
+    new_weights = {key: weight / weight_sum for key, weight in new_weights.items()}
+
+    return new_weights
+

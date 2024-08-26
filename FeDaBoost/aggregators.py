@@ -107,20 +107,12 @@ def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Modu
         Updated global model.
     """
     state_dicts = [model.state_dict() for model in local_models]
-    weights = [round(weight,3) for weight in weights]
 
-    for key in global_model.track_layers.keys():
-
-        stacked_weights = torch.stack(
-            [item[str(key) + ".weight"] * weight for item, weight in zip(state_dicts, weights)]
+    for key in global_model.state_dict().keys():
+        stacked_params = torch.stack(
+            [state_dict[key] * weight for state_dict, weight in zip(state_dicts, weights)], dim=0
         )
 
-        global_model.track_layers[key].weight.data = stacked_weights.sum(dim=0) / sum(weights)
+        global_model.state_dict()[key].data.copy_(stacked_params.sum(dim=0) / sum(weights))
 
-        stacked_biases = torch.stack(
-            [item[str(key) + ".bias"] * weight for item, weight in zip(state_dicts, weights)]
-        )
-
-        global_model.track_layers[key].bias.data = stacked_biases.sum(dim=0) / sum(weights)
-            
     return global_model
