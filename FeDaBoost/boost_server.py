@@ -165,30 +165,31 @@ class Server:
         prev_global_loss = 999999999
         stats = []
 
-        weights = [(1/len(self.client_dict)) for client in self.client_dict]
+        weights_dict = {client: (1 / len(self.client_dict)) for client in self.client_dict}
+        print(f"Initial Weights: {weights_dict}")
 
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
 
-            local_loss = []
-
+            local_loss = {}
 
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
                 client_loss, client_f1 = client.evaluate()
-                client_model, client_losses = client.train(round)
+                print(weights_dict[client.client_id])
+                client_model, client_losses = client.train(round,1-weights_dict[client.client_id])
                 updated_client_loss, client_f1 = client.evaluate()
-                local_loss.append(1-abs(client_loss- updated_client_loss))
+                local_loss[client.client_id] = abs(client_loss- updated_client_loss)*weights_dict[client.client_id]
                 self._receive(client)
 
             print(f"Local Loss: {local_loss}")
 
             if self.stratergy == "fedaboost":
                 alphas = get_alpha(local_loss)
-                weights = get_weights(local_loss, alphas)
-                stats.append(self._collect_stats(local_loss, weights))
-                self.global_model, update_status = self.__aggregate(weights)
+                weights_dict = get_weights(alphas, weights_dict)
+                #stats.append(self._collect_stats(local_loss.values(), weights_dict.values()))
+                self.global_model, update_status = self.__aggregate(alphas.values())
             else:
                 self.global_model, update_status = self.__aggregate()
 

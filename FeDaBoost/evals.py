@@ -31,6 +31,7 @@ def evaluate(
     model: torch.nn.Module,
     test_data: torch.utils.data.DataLoader,
     loss_fn: torch.nn.Module,
+    batch_size: int = 16,
 ) -> tuple:
     """
     Evaluate the model with validation dataset.Returns the average loss, mean squared error and mean absolute error.
@@ -55,7 +56,7 @@ def evaluate(
 
     """
     model.eval()
-    testdl = DataLoader(test_data, 32, shuffle=False, drop_last=True)
+    testdl = DataLoader(test_data, 16, shuffle=False, drop_last=True)
     batch_loss = []
     for _, (x, y) in enumerate(testdl):
         outputs = model(x)
