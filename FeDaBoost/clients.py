@@ -17,9 +17,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
 Published in: 
 """
-
+import torch.nn as nn
 import torch
 import flwr as fl
+
 
 from torch.utils.data import DataLoader, Subset
 from utils import get_device
@@ -48,14 +49,12 @@ class Client:
         batch_size: int,
         learning_rate: float,
         weight_decay: float,
-        local_rounds: int,
         local_model: object = None,
     ) -> None:
 
         self.client_id: str = client_id
         self.loss_fn = loss_fn
         self.batch_size = batch_size
-        self.local_round = local_rounds
 
         self.traindl = DataLoader(
             train_dataset, batch_size, shuffle=True, drop_last=True
@@ -96,7 +95,7 @@ class Client:
         """
         return self.local_model
 
-    def train(self, global_round, weight:float=1) -> tuple:
+    def train(self, global_round, local_round, weight:float=1) -> tuple:
         """
         Training the model.
     
@@ -113,7 +112,12 @@ class Client:
         loss_avg: float; average loss
         """
         train_losses = []
-        for epoch in range(self.local_round):
+
+        self.loss_fn.focal_alpha = 1.0 * weight  # Example: scale alpha with weight
+        self.loss_fn.focal_gamma = 2.0 * (1 - weight)  # Example: inverse scale gamma
+        self.loss_fn.focal_weight = 0.5 * weight  # Example: scale focal weight
+
+        for epoch in range(local_round):
             print("\n")
             batch_loss = []
             for batch_idx, (x, y) in enumerate(self.traindl):
@@ -128,8 +132,6 @@ class Client:
                     y = y.view(-1, 1)
 
                 loss = self.loss_fn(outputs, y)
-                loss = weight * loss
-
                 self.local_model.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -184,26 +186,3 @@ class Client:
         
         return loss_avg, f1_avg
 
-class FlowerClient(fl.client.NumPyClient):
-    def __init__(self, client: Client):
-        self.client = client
-
-    def get_parameters(self):
-        return [val.cpu().numpy() for val in self.client.get_model().parameters()]
-
-    def set_parameters(self, parameters):
-        params_dict = zip(self.client.get_model().state_dict().keys(), parameters)
-        state_dict = {k: torch.tensor(v) for k, v in params_dict}
-        self.client.get_model().load_state_dict(state_dict, strict=True)
-
-    def fit(self, parameters, config):
-        self.set_parameters(parameters)
-        loss_fn = torch.nn.CrossEntropyLoss()
-        model, train_losses = self.client.train(loss_fn, epochs=config["epochs"])
-        return self.get_parameters(), len(self.client.traindl.dataset), {}
-
-    def evaluate(self, parameters, config):
-        self.set_parameters(parameters)
-        loss_fn = torch.nn.CrossEntropyLoss()
-        loss = self.client.eval(loss_fn)
-        return float(loss), len(self.client.valdl.dataset), {}

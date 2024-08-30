@@ -182,10 +182,12 @@ class Server:
                 local_loss.append(1-abs(client_loss- updated_client_loss))
                 self._receive(client)
 
-            print(f"Local Loss: {local_loss}")
-
             if self.stratergy == "fedaboost":
+
+                ranked_clients = sorted(local_loss, key=local_loss.get)
+                print(f"Ranked Clients: {ranked_clients}")
                 alphas = get_alpha(local_loss)
+
                 weights = get_weights(local_loss, alphas)
                 stats.append(self._collect_stats(local_loss, weights))
                 self.global_model, update_status = self.__aggregate(weights)

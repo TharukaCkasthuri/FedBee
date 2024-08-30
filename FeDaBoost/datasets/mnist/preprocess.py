@@ -61,7 +61,10 @@ def create_clients(image_list, label_list, num_clients=20, initial='clients', sa
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
+    print('Creating {} clients'.format(num_clients))
+
     client_names = ['{}_{}'.format(initial, i+1) for i in range(num_clients)]
+    
     max_y = np.argmax(label_list, axis=-1)
     sorted_zip = sorted(zip(max_y, label_list, image_list), key=lambda x: x[0])
     data = [(x, y) for _, y, x in sorted_zip]
@@ -166,7 +169,7 @@ def build_dataset(data_dir, saving_dir) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess the MNIST dataset.")
-    parser.add_argument("--num_clients", type=int, default=20)
+    parser.add_argument("--num_clients", type=int, default=200)
     parser.add_argument("--image_path", type=str, default="/Users/tak/Documents/BTH/MNIST/trainingSet")
     args = parser.parse_args()
 

@@ -20,10 +20,12 @@ Published in:
 import torch
 import numpy as np
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 from torch.utils.data import DataLoader
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
 
@@ -56,7 +58,7 @@ def evaluate(
 
     """
     model.eval()
-    testdl = DataLoader(test_data, 16, shuffle=False, drop_last=True)
+    testdl = DataLoader(test_data, batch_size, shuffle=False, drop_last=True)
     batch_loss = []
     for _, (x, y) in enumerate(testdl):
         outputs = model(x)
@@ -72,12 +74,11 @@ def evaluate(
     loss = np.mean(batch_loss)
     return loss
 
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-
 def evaluate_classification(
     model: torch.nn.Module,
     test_data: torch.utils.data.DataLoader,
     loss_fn: torch.nn.Module,
+    bath_size: int = 16,
 ) -> tuple:
     """
     Evaluate the model with validation dataset. Returns the average loss, accuracy, precision, recall, and F1 score.
@@ -105,31 +106,30 @@ def evaluate_classification(
         F1 score of the model.
     """
     model.eval()
-    testdl = DataLoader(test_data, batch_size=32, shuffle=False, drop_last=True)
+    testdl = DataLoader(test_data, batch_size=bath_size, shuffle=False, drop_last=True)
     
     batch_loss = []
     all_targets = []
     all_preds = []
     
-    with torch.no_grad():
-        for x, y in testdl:
-            outputs = model(x)
-            
-            # Assuming outputs are logits, apply softmax for prediction probabilities
-            y_pred = torch.softmax(outputs, dim=1)
-            
-            # Get predictions and convert targets to appropriate format
-            _, predicted_classes = torch.max(y_pred, 1)
-            if isinstance(y, torch.Tensor) and y.dim() == 1:
-                y_true = y
-            else:
-                y_true = torch.argmax(y, dim=1)
-            
-            loss = loss_fn(y_pred, torch.nn.functional.one_hot(y_true, num_classes=y_pred.size(1)).float())
-            batch_loss.append(loss.item())
-            
-            all_targets.append(y_true)
-            all_preds.append(predicted_classes)
+    for x, y in testdl:
+        outputs = model(x)
+        
+        # Assuming outputs are logits, apply softmax for prediction probabilities
+        y_pred = torch.softmax(outputs, dim=1)
+        
+        # Get predictions and convert targets to appropriate format
+        _, predicted_classes = torch.max(y_pred, 1)
+        if isinstance(y, torch.Tensor) and y.dim() == 1:
+            y_true = y
+        else:
+            y_true = torch.argmax(y, dim=1)
+        
+        loss = loss_fn(y_pred, torch.nn.functional.one_hot(y_true, num_classes=y_pred.size(1)).float())
+        batch_loss.append(loss.item())
+        
+        all_targets.append(y_true)
+        all_preds.append(predicted_classes)
     
     # Concatenate all targets and predictions
     all_targets = torch.cat(all_targets).cpu().numpy()
@@ -214,68 +214,72 @@ def evaluate_mae_with_confidence(
 
     return avg_mae, (lower_mae, upper_mae), bootstrap_mae_std
 
+class FocalLoss(torch.nn.Module):
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        """
+        Focal Loss implementation.
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-
-
-
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=0, alpha=None, size_average=True):
+        Parameters:
+        ------------
+        alpha: float; balancing factor for class imbalance (default=1)
+        gamma: float; focusing parameter to adjust the rate at which easy examples are down-weighted (default=2)
+        reduction: str; reduction method to apply to output ('mean', 'sum', or 'none')
+        """
         super(FocalLoss, self).__init__()
-        self.gamma = gamma
-        self.alpha = alpha
-        if isinstance(alpha,(float,int)): self.alpha = torch.Tensor([alpha,1-alpha])
-        if isinstance(alpha,list): self.alpha = torch.Tensor(alpha)
-        self.size_average = size_average
-
-    def forward(self, input, target):
-        if input.dim()>2:
-            input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W
-            input = input.transpose(1,2)    # N,C,H*W => N,H*W,C
-            input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
-        target = target.view(-1,1)
-
-        logpt = F.log_softmax(input)
-        logpt = logpt.gather(1,target)
-        logpt = logpt.view(-1)
-        pt = Variable(logpt.data.exp())
-
-        if self.alpha is not None:
-            if self.alpha.type()!=input.data.type():
-                self.alpha = self.alpha.type_as(input.data)
-            at = self.alpha.gather(0,target.data.view(-1))
-            logpt = logpt * Variable(at)
-
-        loss = -1 * (1-pt)**self.gamma * logpt
-        if self.size_average: return loss.mean()
-        else: return loss.sum()
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-
-class FocalCosineLoss(nn.Module):
-    def __init__(self, alpha=1, gamma=2, xent=.1):
-        super(FocalCosineLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.reduction = reduction
 
-        self.xent = xent
+    def forward(self, inputs, targets):
+        if inputs.dim() > 2:
+            inputs = inputs.view(inputs.size(0), inputs.size(1), -1)  # N,C,H,W -> N,C,H*W
+            inputs = inputs.permute(0, 2, 1)  # N,C,H*W -> N,H*W,C
+            inputs = inputs.contiguous().view(-1, inputs.size(-1))  # N,H*W,C -> N*H*W,C
+        targets = targets.view(-1)
 
-        self.y = torch.Tensor([1]).cuda()
+        log_pt = F.log_softmax(inputs, dim=-1)
+        pt = torch.exp(log_pt)  # Get probabilities
+        log_pt = log_pt.gather(1, targets.view(-1, 1)).squeeze()  # Select log probabilities of true class
+        pt = pt.gather(1, targets.view(-1, 1)).squeeze()  # Select probabilities of true class
 
-    def forward(self, input, target, reduction="mean"):
-        cosine_loss = F.cosine_embedding_loss(input, F.one_hot(target, num_classes=input.size(-1)), self.y, reduction=reduction)
+        focal_loss = -self.alpha * (1 - pt) ** self.gamma * log_pt
 
-        cent_loss = F.cross_entropy(F.normalize(input), target, reduce=False)
-        pt = torch.exp(-cent_loss)
-        focal_loss = self.alpha * (1-pt)**self.gamma * cent_loss
+        # Apply reduction method
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+        
 
-        if reduction == "mean":
-            focal_loss = torch.mean(focal_loss)
+class HybridLoss(nn.Module):
+    def __init__(self, focal_alpha=1, focal_gamma=2, focal_weight=0.5):
+        """
+        A hybrid loss combining Cross-Entropy and Focal Loss.
 
-        return cosine_loss + self.xent * focal_loss
+        Parameters:
+        ------------
+        focal_alpha: float; alpha parameter for Focal Loss (default=1)
+        focal_gamma: float; gamma parameter for Focal Loss (default=2)
+        focal_weight: float; weighting factor to balance Cross-Entropy and Focal Loss (default=0.5)
+        """
+        super(HybridLoss, self).__init__()
+        self.cross_entropy_loss = nn.CrossEntropyLoss()
+        self.focal_alpha = focal_alpha
+        self.focal_gamma = focal_gamma
+        self.focal_weight = focal_weight
+
+    def focal_loss(self, inputs, targets):
+        log_pt = F.log_softmax(inputs, dim=-1)
+        pt = torch.exp(log_pt)
+        log_pt = log_pt.gather(1, targets.view(-1, 1)).squeeze()
+        pt = pt.gather(1, targets.view(-1, 1)).squeeze()
+        focal_loss = -self.focal_alpha * (1 - pt) ** self.focal_gamma * log_pt
+        return focal_loss.mean()
+
+    def forward(self, inputs, targets):
+        ce_loss = self.cross_entropy_loss(inputs, targets)
+        focal_loss = self.focal_loss(inputs, targets)
+        hybrid_loss = ce_loss * (1 - self.focal_weight) + focal_loss * self.focal_weight
+        return hybrid_loss
