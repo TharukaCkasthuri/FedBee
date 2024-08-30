@@ -4,7 +4,7 @@ import pandas as pd
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
-from utils import get_alpha,get_weights
+from utils import get_alpha,get_weights, influence_alpha, adjust_epochs
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -177,17 +177,28 @@ class Server:
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
                 client_loss, client_f1 = client.evaluate()
-                print(weights_dict[client.client_id])
-                client_model, client_losses = client.train(round,1-weights_dict[client.client_id])
-                updated_client_loss, client_f1 = client.evaluate()
-                local_loss[client.client_id] = abs(client_loss- updated_client_loss)*weights_dict[client.client_id]
+                epochs = adjust_epochs(weights_dict)
+                local_loss[client.client_id] = abs(client_loss)*weights_dict[client.client_id]             
+                client_model, client_losses = client.train(round, epochs[client.client_id], 1-weights_dict[client.client_id])
+                #updated_client_loss, client_f1 = client.evaluate()
+
                 self._receive(client)
 
             print(f"Local Loss: {local_loss}")
 
+            ranked_clients = sorted(local_loss, key=local_loss.get)
+
             if self.stratergy == "fedaboost":
+                ranked_clients = sorted(local_loss, key=local_loss.get)
+
+                alpha_ranked = {}
+                for j, client in enumerate(ranked_clients, start=1):
+                    alpha_ranked[client] = 1 / j
+
                 alphas = get_alpha(local_loss)
-                weights_dict = get_weights(alphas, weights_dict)
+                final_alpha = influence_alpha(0.5, alphas)
+
+                weights_dict = get_weights(final_alpha, weights_dict)
                 #stats.append(self._collect_stats(local_loss.values(), weights_dict.values()))
                 self.global_model, update_status = self.__aggregate(alphas.values())
             else:
@@ -198,8 +209,6 @@ class Server:
             if consecutive_loss_change_rounds == 3:
                 print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
                 break
-
-            
 
             self._broadcast(self.global_model)
             

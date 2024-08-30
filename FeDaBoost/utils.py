@@ -242,8 +242,7 @@ def get_alpha(error_fun: dict, num_classes: int = 10):
     
     # Normalize alpha values
     alpha_sum = np.sum(list(alpha.values()))
-    alpha = {key: value / alpha_sum for key, value in alpha.items()}
-
+    #alpha = {key: value / alpha_sum for key, value in alpha.items()}
     return alpha
 
 
@@ -265,7 +264,56 @@ def get_weights(alpha: dict, prev_weights: dict):
         new_weights[key] = prev_weights[key] * np.exp(-alpha[key])
 
     weight_sum = np.sum(list(new_weights.values()))
-    new_weights = {key: weight / weight_sum for key, weight in new_weights.items()}
+    #new_weights = {key: weight / weight_sum for key, weight in new_weights.items()}
 
     return new_weights
+
+
+def influence_alpha(lambda_param:float, alphas:dict)->dict:
+    """
+    Calculate the influence of alpha values in AdaBoost based on local and global performance.
+
+    Parameters:
+    - lambda_param: Influence factor (lambda), a value between 0 and 1.
+    - alphas: Dictionary of initial alpha values, {client_id: alpha_j_initial}.
+
+    Returns:
+    - A dictionary with the adjusted alpha values, {client_id: adjusted_alpha_j}.
+    """
+    k = len(alphas)
+  
+    final_alphas = {}  
+    
+    for client, alpha_initial in alphas.items():
+        other_alphas_avg = sum(alpha for other_client, alpha in alphas.items() if other_client != client) / (k - 1)
+        
+        adjusted_alpha = lambda_param * alpha_initial + (1 - lambda_param) * other_alphas_avg
+        final_alphas[client] = adjusted_alpha
+    
+    return final_alphas
+    
+
+def adjust_epochs(client_weights, e_base=5, beta=10):
+    """
+    Adjust local training epochs for each client based on their weights.
+    
+    Parameters:
+    - client_weights: A dictionary with client IDs as keys and weights as values, {client_id: weight}.
+    - E_base: Minimum number of training epochs for any client.
+    - beta: Scaling factor to control how much weight influences the epoch count.
+    
+    Returns:
+    - A dictionary with adjusted epochs per client, {client_id: adjusted_epochs}.
+    """
+    # Normalize weights to ensure they sum to 1
+    total_weight = sum(client_weights.values())
+    normalized_weights = {client: weight / total_weight for client, weight in client_weights.items()}
+
+    adjusted_epochs = {}
+    for client, weight in normalized_weights.items():
+        # Calculate adjusted epochs for each client
+        epochs = max(1, int(e_base + beta * weight))  # Ensure at least 1 epoch
+        adjusted_epochs[client] = epochs
+    
+    return adjusted_epochs
 

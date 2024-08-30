@@ -38,6 +38,7 @@ from  aggregators import fedAvg,fedProx
 from datasets.kv.preprocess import KVDataSet
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
+from evals import FocalLoss, HybridLoss
 
 class Federation:
     """
@@ -106,9 +107,8 @@ class Federation:
                 torch.load(f"{test_data_dir}/{id}.pt"),
                 self.loss_fn,
                 32,
-                0.00001,
+                0.001,
                 0.01,
-                self.local_rounds,
                 local_model=model,
             ))
 
@@ -182,7 +182,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=dataset_enum, default="mnist", help="Choose a dataset from the available options; femnist, mnist, kv")
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
-    parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss")
+    parser.add_argument("--loss_function", type=str, default="FocalLoss")
     parser.add_argument("--stratergy", type=str, default="fedaboost", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
@@ -191,7 +191,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    loss_fn = getattr(torch.nn, args.loss_function)()
+    if args.loss_function == "FocalLoss":
+        loss_fn = HybridLoss(focal_alpha=1, focal_gamma=2, focal_weight=0.3)
+    else:
+        loss_fn = getattr(torch.nn, args.loss_function)()
+    
     log_summary = args.log_summary
 
 
