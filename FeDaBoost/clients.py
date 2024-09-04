@@ -115,7 +115,8 @@ class Client:
 
         self.loss_fn.focal_alpha = 1.0 * weight  # Example: scale alpha with weight
         self.loss_fn.focal_gamma = 2.0 * (1 - weight)  # Example: inverse scale gamma
-        self.loss_fn.focal_weight = 0.5 * weight  # Example: scale focal weight
+
+        print(f"Client: {self.client_id} \tTraining...")
 
         for epoch in range(local_round):
             print("\n")

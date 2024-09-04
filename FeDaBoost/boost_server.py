@@ -179,7 +179,7 @@ class Server:
                 client_loss, client_f1 = client.evaluate()
                 epochs = adjust_epochs(weights_dict)
                 local_loss[client.client_id] = abs(client_loss)*weights_dict[client.client_id]             
-                client_model, client_losses = client.train(round, epochs[client.client_id], 1-weights_dict[client.client_id])
+                client_model, client_losses = client.train(round, epochs[client.client_id], weights_dict[client.client_id])
                 #updated_client_loss, client_f1 = client.evaluate()
 
                 self._receive(client)
