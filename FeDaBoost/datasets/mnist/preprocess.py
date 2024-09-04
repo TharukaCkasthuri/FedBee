@@ -148,7 +148,7 @@ def build_dataset(data_dir, saving_dir) -> None:
             data = pickle.load(f)
 
         # Split the data into train and test sets
-        train_data, test_data = train_test_split(data, test_size=0.1, random_state=42)
+        train_data, test_data = train_test_split(data, test_size=0.2, random_state=42)
 
         # Create the datasets
         train_dataset = MNISTDataset(train_data)
