@@ -8,7 +8,7 @@ from utils import get_alpha,get_weights, influence_alpha, adjust_local_epochs
 
 from torch.utils.tensorboard import SummaryWriter
 
-class Server:
+class RankerServer:
 
     """
     The federated learning server class. 
@@ -16,7 +16,7 @@ class Server:
     Parameters:
     ----------------
     rounds: int;
-        Number of global rounds
+        Number of global rounds.
     stratergy: callable;
         Averaging stratergy for federated learning.
     
@@ -57,7 +57,7 @@ class Server:
         Parameters:
         ----------------
         model: torch.nn.Module object;
-            Model to be trained
+            Model to be trained.
 
         Returns:
         ----------------
@@ -85,7 +85,7 @@ class Server:
         self.client_dict[client_id] = client
         
 
-    def _aggregate(self, weights = None) -> None:
+    def __aggregate(self, weights = None) -> None:
         """
         Aggregate the models of the clients.
 
@@ -138,7 +138,7 @@ class Server:
         Parameters:
         ----------------
         model: torch.nn.Module object;
-            Model to be broadcasted
+            Model to be broadcasted.
         """
         model_state_dict = model.state_dict()
         for client_id, client in self.client_dict.items():
@@ -179,23 +179,35 @@ class Server:
         prev_global_loss = 999999999
         stats = []
 
+        weights_dict = {client: (1 / len(self.client_dict)) for client in self.client_dict}
+        print(f"Initial Weights: {weights_dict}")
+
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
-
+            local_loss = {}
             for client in self.client_dict.values():
+                prev_client_loss, _ = client.evaluate()
                 client.set_model(self.global_model.state_dict())
-                _ = client.train(round)
+                client_global_loss, _ = client.evaluate()
+                epoch = adjust_local_epochs(prev_client_loss, client_global_loss)
+                local_loss[client.client_id] = abs(client_global_loss)*weights_dict[client.client_id]             
+                _, _ = client.train(round, epoch, weights_dict[client.client_id])
                 self._receive(client)
 
-            self.global_model, update_status = self.__aggregate()
+            print(f"Local Loss: {local_loss}")
+
+            alphas = get_alpha(local_loss)
+            final_alpha = influence_alpha(0.5, alphas)
+            weights_dict = get_weights(final_alpha, weights_dict)
+            self.global_model, update_status = self.__aggregate(alphas.values())
 
             print(f"Model Updated: {update_status}")
 
             if consecutive_loss_change_rounds == 3:
                 print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
                 break
-            
+
             self._broadcast(self.global_model)
             
             if not update_status:
@@ -207,6 +219,11 @@ class Server:
             if consecutive_no_update_rounds == 3:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
+
+        if self.stratergy == "fedaboost":
+            file_name = "stats/fedaboost_stats_mnist.csv"
+            self._save_stats(stats, file_name)
+            print(f"Saved the training statistics to {file_name}")
 
         # Close the TensorBoard writer
         self.writer.close()
@@ -245,14 +262,14 @@ class Server:
         Parameters:
         ----------------
         local_loss: list
-            List of client losses
+            List of client losses.
         weights: list
-            List of weights for clients
+            List of weights for clients.
 
         Returns:
         ----------------
         dict
-            Dictionary containing training statistics
+            Dictionary containing training statistics.
         """
         stats = {f"{client.client_id}-loss": local_loss[i] for i, client in enumerate(self.client_dict.values())}
         stats.update({f"{client.client_id}-weight": weights[i] for i, client in enumerate(self.client_dict.values())})
@@ -265,9 +282,9 @@ class Server:
         Parameters:
         ----------------
         stats: list
-            List of training statistics
+            List of training statistics.
         path: str
-            Path to save the CSV file
+            Path to save the CSV file.
 
         Returns:
         ----------------
@@ -288,141 +305,16 @@ class Server:
         Parameters:
         ----------------
         prev_params: list
-            List of previous model parameters
+            List of previous model parameters.
         updated_params: list
-            List of updated model parameters
+            List of updated model parameters.
 
         Returns:
         ----------------
         bool
-            True if updated, False otherwise
+            True if updated, False otherwise.
         """
         for prev_param, updated_param in zip(prev_params, updated_params):
             if not torch.equal(prev_param, updated_param):
                 return True
         return False
-
-class OptimaServer(Server):
-
-    """
-    The federated learning server class for fedaboost-optima.
-
-    Parameters:
-    ----------------
-    rounds: int;
-        Number of global rounds
-        stratergy: callable;
-        Averaging stratergy for federated learning.
-
-    Methods:
-    ----------------
-    __aggregate(self, weights = []) -> None:
-        Aggregate the models of the clients.
-    train(self) -> None:
-        Train the model using federated fedaboost-optima algorithm.
-    
-    """
-
-    def __init__(self, rounds: int, strategy: callable) -> None:
-        super().__init__(rounds, strategy)
-
-    def __aggregate(self, weights = None) -> None:
-        """
-        Aggregate the models of the clients.
-
-        Parameters:
-        ----------------
-        weights: list or None
-            List of weights for the weighted average strategy. If None, standard strategies are used.
-
-        Returns:
-        ----------------
-        model: torch.nn.Module object
-            Aggregated model.
-        updated: bool
-            Indicates whether the global model was updated.
-        """
-
-        prev_params = [p.clone() for p in self.global_model.parameters()]
-        client_models = [client.get_model() for client in self.client_dict.values()]
-        self.global_model = weighted_avg(self.global_model, client_models, weights)
-        updated_params = [p.clone() for p in self.global_model.parameters()]
-        updated = self._check_model_update(prev_params, updated_params)
-
-        return self.global_model, updated
-
-
-
-    def train(self):
-        """
-        Train the model using federated learning.
-
-        Parameters:
-        ----------------
-        model: torch.nn.Module object;
-            Model to be trained
-
-        Returns:
-        ----------------
-        model: torch.nn.Module object;
-            Trained model
-        """
-        consecutive_no_update_rounds = 0
-        consecutive_loss_change_rounds = 0
-        prev_global_loss = 999999999
-        stats = []
-
-        weights_dict = {client: (1 / len(self.client_dict)) for client in self.client_dict}
-        print(f"Initial Weights: {weights_dict}")
-
-        for round in range(1,self.rounds+1):
-            update_status = False
-            print(f"\n | Global Training Round : {round} |\n")
-            local_loss = {}
-            for client in self.client_dict.values():
-                prev_client_loss, _ = client.evaluate()
-                client.set_model(self.global_model.state_dict())
-                updated_client_loss, _ = client.evaluate()
-                epoch = adjust_local_epochs(prev_client_loss, updated_client_loss)
-                local_loss[client.client_id] = abs(updated_client_loss)#*weights_dict[client.client_id]
-
-                # Training the client model for the specified number of local rounds, using the local data.
-                _ = client.train(round, epoch, weights_dict[client.client_id])
-
-                self._receive(client)
-
-            print(f"Local Loss: {local_loss}")
-
-            alphas = get_alpha(local_loss)
-            final_alpha = influence_alpha(0.5, alphas)
-            weights_dict = get_weights(final_alpha, weights_dict)
-            self.global_model, update_status = self.__aggregate(alphas.values())
-
-            print(f"Model Updated: {update_status}")
-
-            if consecutive_loss_change_rounds == 3:
-                print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
-                break
-
-            self._broadcast(self.global_model)
-            
-            if not update_status:
-                consecutive_no_update_rounds += 1
-                print("The global model parameters have not been updated, so the training has converged.")
-            else:
-                consecutive_no_update_rounds = 0
-
-            if consecutive_no_update_rounds == 3:
-                print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
-                break
-
-        if self.stratergy == "fedaboost":
-            file_name = "stats/fedaboost_stats_mnist.csv"
-            self._save_stats(stats, file_name)
-            print(f"Saved the training statistics to {file_name}")
-
-        # Close the TensorBoard writer
-        self.writer.close()
-
-        return self.global_model
-    

@@ -4,7 +4,7 @@ import pandas as pd
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
-from utils import get_alpha,get_weights, influence_alpha, adjust_epochs
+from utils import get_alpha,get_weights, influence_alpha, adjust_local_epochs
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -16,7 +16,7 @@ class Server:
     Parameters:
     ----------------
     rounds: int;
-        Number of global rounds
+        Number of global rounds.
     stratergy: callable;
         Averaging stratergy for federated learning.
     
@@ -57,7 +57,7 @@ class Server:
         Parameters:
         ----------------
         model: torch.nn.Module object;
-            Model to be trained
+            Model to be trained.
 
         Returns:
         ----------------
@@ -97,7 +97,7 @@ class Server:
         Returns:
         ----------------
         model: torch.nn.Module object;
-            Aggregated model
+            Aggregated model.
         """
 
         prev_params = [p.clone() for p in self.global_model.parameters()]
@@ -124,7 +124,7 @@ class Server:
         Parameters:
         ----------------
         model: torch.nn.Module object;
-            Model to be broadcasted
+            Model to be broadcasted.
         """
         model_state_dict = model.state_dict()
         for client_id, client in self.client_dict.items():
@@ -171,17 +171,14 @@ class Server:
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
-
             local_loss = {}
-
             for client in self.client_dict.values():
+                prev_client_loss, _ = client.evaluate()
                 client.set_model(self.global_model.state_dict())
-                client_loss, client_f1 = client.evaluate()
-                epochs = adjust_epochs(weights_dict)
-                local_loss[client.client_id] = abs(client_loss)*weights_dict[client.client_id]             
-                client_model, client_losses = client.train(round, epochs[client.client_id], weights_dict[client.client_id])
-                #updated_client_loss, client_f1 = client.evaluate()
-
+                client_global_loss, _ = client.evaluate()
+                epoch = adjust_local_epochs(prev_client_loss, client_global_loss)
+                local_loss[client.client_id] = abs(client_global_loss)*weights_dict[client.client_id]             
+                _, _ = client.train(round, epoch, weights_dict[client.client_id])
                 self._receive(client)
 
             print(f"Local Loss: {local_loss}")
@@ -264,14 +261,14 @@ class Server:
         Parameters:
         ----------------
         local_loss: list
-            List of client losses
+            List of client losses.
         weights: list
-            List of weights for clients
+            List of weights for clients.
 
         Returns:
         ----------------
         dict
-            Dictionary containing training statistics
+            Dictionary containing training statistics.
         """
         stats = {f"{client.client_id}-loss": local_loss[i] for i, client in enumerate(self.client_dict.values())}
         stats.update({f"{client.client_id}-weight": weights[i] for i, client in enumerate(self.client_dict.values())})
@@ -284,9 +281,9 @@ class Server:
         Parameters:
         ----------------
         stats: list
-            List of training statistics
+            List of training statistics.
         path: str
-            Path to save the CSV file
+            Path to save the CSV file.
 
         Returns:
         ----------------
@@ -307,14 +304,14 @@ class Server:
         Parameters:
         ----------------
         prev_params: list
-            List of previous model parameters
+            List of previous model parameters.
         updated_params: list
-            List of updated model parameters
+            List of updated model parameters.
 
         Returns:
         ----------------
         bool
-            True if updated, False otherwise
+            True if updated, False otherwise.
         """
         for prev_param, updated_param in zip(prev_params, updated_params):
             if not torch.equal(prev_param, updated_param):

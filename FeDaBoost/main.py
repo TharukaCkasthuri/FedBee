@@ -24,8 +24,10 @@ import os
 
 from enum import Enum
 
-from clients import Client
+from clients import Client, OptimaClient
 from boost_server import Server
+from optima import OptimaServer
+
 #from rl_server import RLServer
 from utils import get_device, get_client_ids
 
@@ -91,26 +93,36 @@ class Federation:
         self.stratergy = stratergy
 
         # Initialize the server, and the clients. 
-        if stratergy == "rl":
-            pass
-            #self.server = RLServer(global_rounds,stratergy)
+        if stratergy == "fedaboost-optima":
+            self.server = OptimaServer(global_rounds,stratergy)
+            self.server.init_model(model)
+
+            for id in client_ids:
+                self.server.connect_client(OptimaClient(
+                    id,
+                    torch.load(f"{train_data_dir}/{id}.pt"),
+                    torch.load(f"{test_data_dir}/{id}.pt"),
+                    self.loss_fn,
+                    32,
+                    0.001,
+                    0.01,
+                    local_model=model,
+                ))
         else:
             self.server = Server(global_rounds,stratergy)
-
-        self.server.init_model(model)
-
-        # Set up the clients
-        for id in client_ids:
-            self.server.connect_client(Client(
-                id,
-                torch.load(f"{train_data_dir}/{id}.pt"),
-                torch.load(f"{test_data_dir}/{id}.pt"),
-                self.loss_fn,
-                32,
-                0.001,
-                0.01,
-                local_model=model,
-            ))
+            self.server.init_model(model)
+            # Set up the clients
+            for id in client_ids:
+                self.server.connect_client(Client(
+                    id,
+                    torch.load(f"{train_data_dir}/{id}.pt"),
+                    torch.load(f"{test_data_dir}/{id}.pt"),
+                    self.loss_fn,
+                    32,
+                    0.001,
+                    0.01,
+                    local_model=model,
+                ))
 
     def train(self) -> tuple:
         """
@@ -182,8 +194,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=dataset_enum, default="mnist", help="Choose a dataset from the available options; femnist, mnist, kv")
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
-    parser.add_argument("--loss_function", type=str, default="CrossEntropyLoss", help="Choose a loss function from the available options; CrossEntropyLoss, FocalLoss, HybridLoss")
-    parser.add_argument("--stratergy", type=str, default="fedaboost", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
+    parser.add_argument("--loss_function", type=str, default="FocalLoss", help="Choose a loss function from the available options; CrossEntropyLoss, FocalLoss, HybridLoss")
+    parser.add_argument("--stratergy", type=str, default="fedaboost-optima", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)

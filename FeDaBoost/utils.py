@@ -317,3 +317,31 @@ def adjust_epochs(client_weights, e_base=5, beta=10):
     
     return adjusted_epochs
 
+
+def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=10):
+    """
+    Adjust the number of local training epochs for all clients based on the loss reduction.
+
+    Parameters:
+    - current_loss: The current global validation loss.
+    - previous_loss: The previous global validation loss.
+    - e_base: Minimum number of training epochs for any client.
+    - gamma: Scaling factor to control how much the loss reduction influences the epoch count.
+
+    Returns:
+    - Adjusted number of training epochs for each client.
+    """
+    # Calculate the loss reduction
+    loss_reduction = previous_loss - current_loss  # Positive if loss has decreased, negative if increased
+
+    if loss_reduction > 0:  # If there is a positive loss reduction (improvement)
+        # Decrease local epochs to avoid overfitting
+        adjusted_epochs = max(1, int(e_base - gamma * loss_reduction))
+    else:  # If loss reduction is zero or negative (no improvement or deterioration)
+        # Increase local epochs to allow more training
+        adjusted_epochs = e_base + abs(int(gamma * loss_reduction))
+
+    return adjusted_epochs
+
+
+

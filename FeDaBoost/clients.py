@@ -16,13 +16,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
 Published in: 
+
 """
-import torch.nn as nn
+
 import torch
-import flwr as fl
 
-
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from utils import get_device
 from datasets.mnist.preprocess import MNISTDataset
 from datasets.femnist.preprocess import FEMNISTDataset
@@ -113,10 +112,11 @@ class Client:
         """
         train_losses = []
 
-        self.loss_fn.focal_alpha = 1.0 * weight  # Example: scale alpha with weight
+        self.loss_fn.focal_alpha = 1.0 
         self.loss_fn.focal_gamma = 2.0 * (1 - weight)  # Example: inverse scale gamma
 
         print(f"Client: {self.client_id} \tTraining...")
+        print(local_round)
 
         for epoch in range(local_round):
             print("\n")
@@ -187,3 +187,90 @@ class Client:
         
         return loss_avg, f1_avg
 
+
+
+class OptimaClient(Client):
+
+    """
+    Client class for federated learning.
+    
+    Parameters:
+    ------------
+    client_id: str; client id
+    train_dataset: torch.utils.data.Dataset object; training dataset
+    test_dataset: torch.utils.data.Dataset object; validation dataset
+    batch_size: int; batch size
+    learning_rate: float; learning rate
+    weight_decay: float; weight decay
+    local_model: torch.nn.Module object; model
+    """
+
+    def __init__(
+        self,
+        client_id: str,
+        train_dataset: object,
+        test_dataset: object,
+        loss_fn: torch.nn.Module,
+        batch_size: int,
+        learning_rate: float,
+        weight_decay: float,
+        local_model: object = None,
+    ) -> None:
+        
+        super().__init__(
+            client_id, 
+            train_dataset, 
+            test_dataset, 
+            loss_fn, 
+            batch_size, 
+            learning_rate, 
+            weight_decay, 
+            local_model
+        )
+
+    def train(self, global_round, local_round, weight:float=1) -> tuple:
+        """
+        Training the model, using the fedaboost-optima strategy.
+
+        Parameters:
+        ------------
+        model: torch.nn.Module object; model to be trained
+        loss_fn: torch.nn.Module object; loss function
+
+        Returns:
+        ------------
+        model: torch.nn.Module object; trained model
+        """
+        self.loss_fn.focal_alpha = 1.0
+        self.loss_fn.focal_gamma = 2.0 * (1 - weight)  # Example: inverse scale gamma
+
+        print(f"Client: {self.client_id} \tTraining...")
+        print(local_round)
+
+        for epoch in range(local_round):
+            print("\n")
+            batch_loss = []
+            for batch_idx, (x, y) in enumerate(self.traindl):
+                x, y = x.to(self.device), y.to(self.device)
+                outputs = self.local_model(x)
+
+                if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+                    y = y.view(-1)
+                elif isinstance(self.train_dataset, MNISTDataset):
+                    y = torch.argmax(y, dim=1)
+                else:
+                    y = y.view(-1, 1)
+
+                loss = self.loss_fn(outputs, y)
+                self.local_model.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+    
+                batch_loss.append(loss.item())
+    
+            loss_avg = sum(batch_loss) / len(batch_loss)    
+            print(
+                f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round}"
+            )
+
+        return self.local_model
