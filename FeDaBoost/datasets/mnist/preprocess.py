@@ -1,3 +1,22 @@
+"""
+Copyright (C) [2023] [Tharuka Kasthuriarachchige]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
+Published in: 
+"""
 import numpy as np
 import pickle
 import cv2
@@ -10,6 +29,7 @@ from sklearn.model_selection import train_test_split
 
 import torch
 from torch.utils.data import Dataset
+from torch.utils.data import ConcatDataset
 
 from imutils import paths
 
@@ -87,11 +107,21 @@ def create_clients(image_list, label_list, num_clients=20, initial='clients', sa
 
 class MNISTDataset(Dataset):
     """
-    Custom dataset class for the training and validation dataset.
+    Custom dataset class for the MNIST dataset. Supports both single datasets 
+    and concatenated datasets.
+
+    Parameters:
+        ------------
+        data_list: list or Dataset; 
+            - If it's a single dataset, use it directly.
+            - If it's a list of datasets, concatenate them.
     """
 
-    def __init__(self, data) -> None:
-        self.data = data
+    def __init__(self, data_list) -> None:
+        if isinstance(data_list, list):
+            self.data = ConcatDataset(data_list)
+        else:
+            self.data = data_list
 
     def __len__(self) -> int:
         """
@@ -118,6 +148,7 @@ class MNISTDataset(Dataset):
         """
         image, label = self.data[idx]
         return torch.tensor(image, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
+
 
     
 def build_dataset(data_dir, saving_dir) -> None:

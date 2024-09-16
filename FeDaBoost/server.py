@@ -1,10 +1,35 @@
+"""
+Copyright (C) [2023] [Tharuka Kasthuriarachchige]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
+Published in: 
+"""
+
 import torch
 import os
 import pandas as pd
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
-from utils import get_alpha,get_weights, influence_alpha, adjust_local_epochs
+from utils import get_alpha,get_weights, influence_alpha, adjust_local_epochs, get_device
+
+from datasets.femnist.preprocess import FEMNISTDataset
+from datasets.mnist.preprocess import MNISTDataset
+
+from sklearn.metrics import f1_score
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -42,10 +67,12 @@ class Server:
         Check if the model parameters have been updated.
     """
 
-    def __init__(self,rounds:int, stratergy:callable, log_dir:str = 'runs') -> None:
+    def __init__(self,rounds:int, stratergy:callable, checkpt_path:str=None, log_dir:str = 'runs') -> None:
         self.rounds = rounds
         self.stratergy = stratergy
         self.client_dict = {}
+        self.checkpoint_path = checkpt_path
+        print(f"Checkpoint Path: {self.checkpoint_path}")
 
         # Initialize TensorBoard writer
         self.writer = SummaryWriter(log_dir=log_dir)
@@ -179,16 +206,24 @@ class Server:
         prev_global_loss = 999999999
         stats = []
 
+        global_loss = []
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
 
+            loss_item = 0
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
+                loss, f1 = client.evaluate()
+                loss_item += loss
                 _ = client.train(round)
                 self._receive(client)
 
-            self.global_model, update_status = self.__aggregate()
+            global_loss.append((loss_item/len(self.client_dict.values())))
+
+            self.global_model, update_status = self._aggregate()
+
+            self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
 
             print(f"Model Updated: {update_status}")
 
@@ -207,6 +242,11 @@ class Server:
             if consecutive_no_update_rounds == 3:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
+        
+        # convert the global loss to a CSV file
+        global_loss_csv = pd.DataFrame(global_loss)
+        file_name = "stats/fedavg_stats_mnist.csv"
+        self._save_stats(global_loss_csv, file_name)
 
         # Close the TensorBoard writer
         self.writer.close()
@@ -301,6 +341,33 @@ class Server:
             if not torch.equal(prev_param, updated_param):
                 return True
         return False
+    
+    def save_checkpt(self, checkpoint: torch.nn.Module, ckptpath: str) -> None:
+        """
+        Saving the checkpoints.
+
+        Parameters:
+        ----------------
+        checkpoint:
+            Model at a specific checkpoint.
+        ckptpath: str;
+            Path to save the checkpoint. Default is None.
+
+        Returns:
+        ----------------
+        None
+        """
+        if os.path.exists(ckptpath):
+            torch.save(
+                checkpoint.state_dict(),
+                ckptpath,
+            )
+        else:
+            os.makedirs(os.path.dirname(ckptpath), exist_ok=True)
+            torch.save(
+                checkpoint.state_dict(),
+                ckptpath,
+            )
 
 class OptimaServer(Server):
 
@@ -323,8 +390,8 @@ class OptimaServer(Server):
     
     """
 
-    def __init__(self, rounds: int, strategy: callable) -> None:
-        super().__init__(rounds, strategy)
+    def __init__(self, rounds: int, strategy: callable, checkpt_path:str=None,  log_dir:str = 'runs') -> None:
+        super().__init__(rounds, strategy, checkpt_path, log_dir)
 
     def __aggregate(self, weights = None) -> None:
         """
@@ -398,6 +465,9 @@ class OptimaServer(Server):
             weights_dict = get_weights(final_alpha, weights_dict)
             self.global_model, update_status = self.__aggregate(alphas.values())
 
+            self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
+
+
             print(f"Model Updated: {update_status}")
 
             if consecutive_loss_change_rounds == 3:
@@ -426,3 +496,177 @@ class OptimaServer(Server):
 
         return self.global_model
     
+class RankServer(Server):
+    """
+    The federated learning server class for fedaboost-ranker.
+
+    Parameters:
+    ----------------
+    rounds: int;
+        Number of global rounds
+        stratergy: callable;
+        Averaging stratergy for federated learning.
+
+    Methods:
+    ----------------
+    __aggregate(self, weights = []) -> None:
+        Aggregate the models of the clients.
+    train(self) -> None:
+        Train the model using federated fedaboost-ranker algorithm.
+    
+    """
+
+    def __init__(self, rounds: int, strategy: callable, checkpt_path:str=None,  log_dir:str = 'runs', test_dataset = "None", loss_fn:torch.nn.Module=None) -> None:
+        super().__init__(rounds, strategy, checkpt_path, log_dir)
+        self.test_dataset = test_dataset
+        self.test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=True)
+        self.device = get_device()
+        self.loss_fn = loss_fn
+
+    def __aggregate(self, weights = None) -> None:
+        """
+        Aggregate the models of the clients.
+
+        Parameters:
+        ----------------
+        weights: list or None
+            List of weights for the weighted average strategy. If None, standard strategies are used.
+
+        Returns:
+        ----------------
+        model: torch.nn.Module object
+            Aggregated model.
+        updated: bool
+            Indicates whether the global model was updated.
+        """
+
+        prev_params = [p.clone() for p in self.global_model.parameters()]
+        client_models = [client.get_model() for client in self.client_dict.values()]
+        client_losses = {}
+
+        for client in self.client_dict.values():
+            client_losses[client.client_id] = self.evaluate(client.get_model())
+
+        sorted_clients = sorted(client_losses.items(), key=lambda x: x[1])
+        client_ranks = {client_id: rank+1 for rank, (client_id, _) in enumerate(sorted_clients)}
+        alphas = get_alpha(client_losses)
+        final_alpha = {client_id: alphas[client_id] / client_ranks[client_id] for client_id in client_losses}
+
+        weights = get_weights(final_alpha, weights)
+
+
+        self.global_model = weighted_avg(self.global_model, client_models, alphas.values())
+
+        updated_params = [p.clone() for p in self.global_model.parameters()]
+        updated = self._check_model_update(prev_params, updated_params)
+
+        return self.global_model, weights, updated
+
+    
+    
+    def train(self):
+        """
+        Train the model using federated learning.
+
+        Parameters:
+        ----------------
+        model: torch.nn.Module object;
+            Model to be trained
+
+        Returns:
+        ----------------
+        model: torch.nn.Module object;
+            Trained model
+        """
+        consecutive_no_update_rounds = 0
+        consecutive_loss_change_rounds = 0
+        prev_global_loss = 999999999
+        stats = []
+
+        weights_dict = {client: (1 / len(self.client_dict)) for client in self.client_dict}
+        print(f"Initial Weights: {weights_dict}")
+
+        for round in range(1,self.rounds+1):
+            update_status = False
+            print(f"\n | Global Training Round : {round} |\n")
+            local_loss = {}
+            for client in self.client_dict.values():
+                prev_client_loss, _ = client.evaluate()
+                client.set_model(self.global_model.state_dict())
+                updated_client_loss, _ = client.evaluate()
+                epoch = adjust_local_epochs(prev_client_loss, updated_client_loss)
+                local_loss[client.client_id] = abs(updated_client_loss)#*weights_dict[client.client_id]
+
+                # Training the client model for the specified number of local rounds, using the local data.
+                _ = client.train(round, epoch, weights_dict[client.client_id])
+
+                self._receive(client)
+
+
+            self.global_model,weights_dict, update_status = self.__aggregate(weights_dict)
+
+            self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
+
+
+            print(f"Model Updated: {update_status}")
+
+            if consecutive_loss_change_rounds == 3:
+                print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
+                break
+
+            self._broadcast(self.global_model)
+            
+            if not update_status:
+                consecutive_no_update_rounds += 1
+                print("The global model parameters have not been updated, so the training has converged.")
+            else:
+                consecutive_no_update_rounds = 0
+
+            if consecutive_no_update_rounds == 3:
+                print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
+                break
+
+        if self.stratergy == "fedaboost":
+            file_name = "stats/fedaboost_stats_mnist.csv"
+            self._save_stats(stats, file_name)
+            print(f"Saved the training statistics to {file_name}")
+
+        # Close the TensorBoard writer
+        self.writer.close()
+
+        return self.global_model
+
+    
+
+    def evaluate(self, model: torch.nn.Module) -> tuple:
+        """
+        Evaluate the receieved local model using the test dataset.
+
+        Parameters:
+        ----------------
+        None
+
+        Returns:
+        ----------------
+        loss: float
+            Loss of the model
+        f1: float
+            F1 score of the model
+        """
+        batch_loss = []
+
+        for _, (x, y) in enumerate(self.test_dataloader):
+            x, y = x.to(self.device), y.to(self.device)
+            outputs = model(x)
+            if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.test_dataset, FEMNISTDataset):
+                y = y.view(-1)
+            elif isinstance(self.test_dataset, MNISTDataset):
+                y = torch.argmax(y, dim=1)
+            else:
+                y = y.view(-1, 1)
+            
+            loss = self.loss_fn(outputs, y)
+            batch_loss.append(loss.item())            
+        
+        loss_avg = sum(batch_loss) / len(batch_loss)
+        return loss_avg 
