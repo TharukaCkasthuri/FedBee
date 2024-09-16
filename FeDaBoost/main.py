@@ -24,23 +24,23 @@ import os
 
 from enum import Enum
 
-from clients import Client, OptimaClient
-from boost_server import Server
-from optima import OptimaServer
+from clients import Client, OptimaClient, RankClient
+from server import Server
+from server import OptimaServer, RankServer
 
-#from rl_server import RLServer
+
 from utils import get_device, get_client_ids
 
 from models.kv import ShallowNN
 from models.femnist import FEMNISTNet
 from models.mnist import MNISTNet
 
-from  aggregators import fedAvg,fedProx
+from evals import FocalLoss, HybridLoss
 
 from datasets.kv.preprocess import KVDataSet
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
-from evals import FocalLoss, HybridLoss
+from torch.utils.data import ConcatDataset
 
 class Federation:
     """
@@ -94,9 +94,10 @@ class Federation:
 
         # Initialize the server, and the clients. 
         if stratergy == "fedaboost-optima":
-            self.server = OptimaServer(global_rounds,stratergy)
+            self.server = OptimaServer(global_rounds,stratergy,checkpt_path=checkpt_path)
             self.server.init_model(model)
 
+            # Set up the clients for fedaboost-optima server
             for id in client_ids:
                 self.server.connect_client(OptimaClient(
                     id,
@@ -108,10 +109,33 @@ class Federation:
                     0.01,
                     local_model=model,
                 ))
-        else:
-            self.server = Server(global_rounds,stratergy)
+        elif stratergy == "fedaboost-ranker":
+            test_data = []
+            for id in client_ids:
+                ds = torch.load(f"{test_data_dir}/{id}.pt")
+                test_data.append(ds)
+            test_dataset = MNISTDataset(test_data)
+
+            self.server = RankServer(global_rounds, stratergy, checkpt_path=checkpt_path, test_dataset=test_dataset,loss_fn=self.loss_fn)
             self.server.init_model(model)
-            # Set up the clients
+
+            # Set up the clients for fedaboost-ranker server
+            for id in client_ids:
+                self.server.connect_client(RankClient(
+                    id,
+                    torch.load(f"{train_data_dir}/{id}.pt"),
+                    torch.load(f"{test_data_dir}/{id}.pt"),
+                    self.loss_fn,
+                    32,
+                    0.001,
+                    0.01,
+                    local_model=model,
+                ))
+        else:
+            self.server = Server(global_rounds,stratergy,checkpt_path=checkpt_path)
+            self.server.init_model(model)
+
+            # Set up the clients for fedavg server
             for id in client_ids:
                 self.server.connect_client(Client(
                     id,
@@ -122,6 +146,7 @@ class Federation:
                     0.001,
                     0.01,
                     local_model=model,
+                    local_round=self.local_rounds,
                 ))
 
     def train(self) -> tuple:
@@ -173,6 +198,13 @@ class Dataset(Enum):
     MNIST = "mnist"
     KV = "kv"
 
+class Stratergy(Enum):
+    FEDAVG = "fedavg"
+    FEDPROX = "fedprox"
+    FEDABOOSTOPTIMA = "fedaboost-optima"
+    FEDABOOSTRANKER = "fedaboost-ranker"
+    FEDABOOSTCONCORD = "fedaboost-concord"
+
 def dataset_enum(dataset_str):
     """
     Returns the dataset enum.
@@ -195,7 +227,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="FocalLoss", help="Choose a loss function from the available options; CrossEntropyLoss, FocalLoss, HybridLoss")
-    parser.add_argument("--stratergy", type=str, default="fedaboost-optima", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
+    parser.add_argument("--stratergy", type=str, default="fedaboost-ranker", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
@@ -223,7 +255,6 @@ if __name__ == "__main__":
     dataset = args.dataset
 
     checkpt_path = f"checkpt/{stratergy}/{dataset.name}/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
-    print(checkpt_path)
 
     client_ids = get_client_ids(train_data_dir)
 

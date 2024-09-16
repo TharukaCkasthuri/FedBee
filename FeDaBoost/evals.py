@@ -25,7 +25,8 @@ import torch.nn.functional as F
 
 from torch.utils.data import DataLoader
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, f1_score
+
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
 
@@ -76,74 +77,57 @@ def evaluate(
 
 def evaluate_classification(
     model: torch.nn.Module,
-    test_data: torch.utils.data.DataLoader,
+    test_data: torch.utils.data.Dataset,
     loss_fn: torch.nn.Module,
-    bath_size: int = 16,
+    batch_size: int = 16
 ) -> tuple:
     """
-    Evaluate the model with validation dataset. Returns the average loss, accuracy, precision, recall, and F1 score.
+    Evaluate the model with validation dataset.
 
     Parameters:
-    -------------
-    model: torch.nn.Module object;
-        Model to be evaluated.
-    test_data: torch.utils.data.DataLoader object;
-        Validation dataset.
-    loss_fn: torch.nn.Module object;
-        Loss function, such as FocalLoss.
+    ------------
+    model: torch.nn.Module object; model to be evaluated.
+    test_data: torch.utils.data.Dataset object; dataset for evaluation.
+    loss_fn: torch.nn.Module object; loss function.
+    batch_size: int; batch size for evaluation (default=16).
 
     Returns:
-    -------------
-    avg_loss: float;
-      Average loss.
-    accuracy: float;
-        Accuracy of the model.
-    precision: float;
-        Precision of the model.
-    recall: float;
-        Recall of the model.
-    f1_score: float;
-        F1 score of the model.
+    ------------
+    loss_avg: float; average loss.
+    f1_avg: float; average F1 score.
+    accuracy: float; accuracy score.
     """
     model.eval()
-    testdl = DataLoader(test_data, batch_size=bath_size, shuffle=False, drop_last=True)
-    
-    batch_loss = []
-    all_targets = []
-    all_preds = []
-    
-    for x, y in testdl:
-        outputs = model(x)
-        
-        # Assuming outputs are logits, apply softmax for prediction probabilities
-        y_pred = torch.softmax(outputs, dim=1)
-        
-        # Get predictions and convert targets to appropriate format
-        _, predicted_classes = torch.max(y_pred, 1)
-        if isinstance(y, torch.Tensor) and y.dim() == 1:
-            y_true = y
-        else:
-            y_true = torch.argmax(y, dim=1)
-        
-        loss = loss_fn(y_pred, torch.nn.functional.one_hot(y_true, num_classes=y_pred.size(1)).float())
-        batch_loss.append(loss.item())
-        
-        all_targets.append(y_true)
-        all_preds.append(predicted_classes)
-    
-    # Concatenate all targets and predictions
-    all_targets = torch.cat(all_targets).cpu().numpy()
-    all_preds = torch.cat(all_preds).cpu().numpy()
-    
-    # Calculate average loss
-    avg_loss = np.mean(batch_loss)
-    
-    # Calculate classification metrics
-    accuracy = accuracy_score(all_targets, all_preds)
-    precision, recall, f1_score, _ = precision_recall_fscore_support(all_targets, all_preds, average='weighted')
-    
-    return avg_loss, accuracy, precision, recall, f1_score
 
+    testdl = DataLoader(test_data, batch_size=batch_size, shuffle=False, drop_last=True)
+
+    batch_loss = []
+    all_preds = []
+    all_labels = []
+
+    for _, (x, y) in enumerate(testdl):
+        outputs = model(x)
+
+        if isinstance(loss_fn, torch.nn.CrossEntropyLoss) and isinstance(test_data, FEMNISTDataset):
+            y = y.view(-1)
+        elif isinstance(test_data, MNISTDataset):
+            y = torch.argmax(y, dim=1)
+        else:
+            y = y.view(-1, 1)
+
+        loss = loss_fn(outputs, y)
+        batch_loss.append(loss.item())
+
+        preds = torch.argmax(outputs, dim=1)
+        
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(y.cpu().numpy())
+
+    loss_avg = sum(batch_loss) / len(batch_loss)
+    f1_avg = f1_score(all_labels, all_preds, average='weighted')
+    accuracy = accuracy_score(all_labels, all_preds)
+
+    return loss_avg, f1_avg, accuracy
 
 def evaluate_mae_with_confidence(
     model: torch.nn.Module,
@@ -206,7 +190,6 @@ def evaluate_mae_with_confidence(
     # Calculate confidence intervals
     confidence_interval = (1 - confidence_level) / 2
     sorted_mae = np.sort(bootstrap_mae)
-
     lower_mae = sorted_mae[int(confidence_interval * num_bootstrap_samples)]
     upper_mae = sorted_mae[int((1 - confidence_interval) * num_bootstrap_samples)]
 
@@ -232,15 +215,15 @@ class FocalLoss(torch.nn.Module):
 
     def forward(self, inputs, targets):
         if inputs.dim() > 2:
-            inputs = inputs.view(inputs.size(0), inputs.size(1), -1)  # N,C,H,W -> N,C,H*W
-            inputs = inputs.permute(0, 2, 1)  # N,C,H*W -> N,H*W,C
-            inputs = inputs.contiguous().view(-1, inputs.size(-1))  # N,H*W,C -> N*H*W,C
+            inputs = inputs.view(inputs.size(0), inputs.size(1), -1)  
+            inputs = inputs.permute(0, 2, 1) 
+            inputs = inputs.contiguous().view(-1, inputs.size(-1))  
         targets = targets.view(-1)
 
         log_pt = F.log_softmax(inputs, dim=-1)
-        pt = torch.exp(log_pt)  # Get probabilities
-        log_pt = log_pt.gather(1, targets.view(-1, 1)).squeeze()  # Select log probabilities of true class
-        pt = pt.gather(1, targets.view(-1, 1)).squeeze()  # Select probabilities of true class
+        pt = torch.exp(log_pt)  
+        log_pt = log_pt.gather(1, targets.view(-1, 1)).squeeze() 
+        pt = pt.gather(1, targets.view(-1, 1)).squeeze()  
 
         focal_loss = -self.alpha * (1 - pt) ** self.gamma * log_pt
 
