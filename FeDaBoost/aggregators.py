@@ -19,7 +19,6 @@ Published in:
 """
 
 import torch
-
 from typing import List
 
 def fedAvg(global_model: torch.nn.Module, local_models: List[torch.nn.Module]) -> torch.nn.Module:
