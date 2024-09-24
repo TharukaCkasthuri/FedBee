@@ -197,6 +197,7 @@ def evaluate_mae_with_confidence(
 
     return avg_mae, (lower_mae, upper_mae), bootstrap_mae_std
 
+
 class FocalLoss(torch.nn.Module):
     def __init__(self, alpha=1, gamma=2, reduction='mean'):
         """

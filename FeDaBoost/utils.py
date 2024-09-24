@@ -152,7 +152,7 @@ def get_alpha(error_fun: dict, num_classes: int = 10):
     """
     # Extract errors from the dictionary and normalize them
     errs = {key: error / np.sum(list(error_fun.values())) for key, error in error_fun.items()}
-    
+
     # Initialize the dictionary to hold the alpha values
     alpha = {}
     
@@ -189,8 +189,9 @@ def get_weights(alpha: dict, prev_weights: dict):
     for key in prev_weights.keys():
         new_weights[key] = prev_weights[key] * np.exp(-alpha[key])
 
-    weight_sum = np.sum(list(new_weights.values()))
-    #new_weights = {key: weight / weight_sum for key, weight in new_weights.items()}
+    # Normalize the weights
+    total_weight = np.sum(list(new_weights.values()))
+    new_weights = {key: value / total_weight for key, value in new_weights.items()}
 
     return new_weights
 
@@ -237,14 +238,15 @@ def adjust_epochs(client_weights, e_base=5, beta=10):
 
     adjusted_epochs = {}
     for client, weight in normalized_weights.items():
-        # Calculate adjusted epochs for each client
-        epochs = max(1, int(e_base + beta * weight))  # Ensure at least 1 epoch
+        calculated_epochs = e_base + beta * weight
+        epochs = max(1, int(calculated_epochs))  
+        print(f"Client: {client}, Weight: {weight}, Calculated Epochs: {calculated_epochs}, Adjusted Epochs: {epochs}")
         adjusted_epochs[client] = epochs
     
     return adjusted_epochs
 
 
-def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=10):
+def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=20):
     """
     Adjust the number of local training epochs for all clients based on the loss reduction.
 
@@ -257,7 +259,7 @@ def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=10):
     Returns:
     - Adjusted number of training epochs for each client.
     """
-    # Calculate the loss reduction
+    print(f"Previous Loss: {previous_loss}, Current Loss: {current_loss}")
     loss_reduction = previous_loss - current_loss  # Positive if loss has decreased, negative if increased
 
     if loss_reduction > 0:  # If there is a positive loss reduction (improvement)
@@ -266,8 +268,27 @@ def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=10):
     else:  # If loss reduction is zero or negative (no improvement or deterioration)
         # Increase local epochs to allow more training
         adjusted_epochs = e_base + abs(int(gamma * loss_reduction))
-
+    print(f"Loss Reduction: {loss_reduction}, Adjusted Epochs: {adjusted_epochs}")
     return adjusted_epochs
+
+def z_scores(weight_dict):
+    """
+    Calculate the z-scores for all values in a dictionary of weights.
+
+    :param weight_dict: Dictionary where keys are clients and values are weights
+    :return: Dictionary of clients and their corresponding z-scores
+    """
+    values = np.array(list(weight_dict.values()))
+    mean = np.mean(values)
+    std_dev = np.std(values)
+    
+    # Handle the case where standard deviation is zero
+    if std_dev == 0:
+        raise ValueError("Standard deviation cannot be zero.")
+    
+    z_scores = {key: (value - mean) / std_dev for key, value in weight_dict.items()}
+    
+    return z_scores
 
 
 

@@ -14,17 +14,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-Paper: [FeDABoost: AdaBoost Enhanced Federated Learning]
+Paper: [FeDBee: AdaBoost Enhanced Federated Learning]
 Published in: 
 """
 import time
 import torch
 import argparse
 import os
+import logging
 
 from enum import Enum
+from datetime import datetime
 
-from clients import Client, OptimaClient, RankClient
+from clients import Client, BoostingClient
 from server import Server
 from server import OptimaServer, RankServer
 
@@ -40,7 +42,7 @@ from evals import FocalLoss, HybridLoss
 from datasets.kv.preprocess import KVDataSet
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
-from torch.utils.data import ConcatDataset
+
 
 class Federation:
     """
@@ -54,12 +56,16 @@ class Federation:
         Model to be trained.
     loss_fn: torch.nn.Module;
         Loss function.
+    train_data_dir: str;
+        Path to the training data directory.
+    test_data_dir: str;
+        Path to the test data directory.
     global_rounds: int;
         Number of global rounds.
     stratergy: callable;
-        Federated learning averaging stratergy.
+        Federated learning stratergy.
     local_rounds: int;
-        Number of local rounds.
+        Number of local rounds. This is only used for FedAvg.
 
     Methods:
     ----------
@@ -82,7 +88,7 @@ class Federation:
         test_data_dir: str,
         global_rounds: int,
         stratergy: callable,
-        local_rounds: int,
+        local_rounds: int = None,
     ) -> None:
         
         self.client_ids = client_ids
@@ -92,14 +98,13 @@ class Federation:
         self.local_rounds = local_rounds
         self.stratergy = stratergy
 
-        # Initialize the server, and the clients. 
         if stratergy == "fedaboost-optima":
-            self.server = OptimaServer(global_rounds,stratergy,checkpt_path=checkpt_path)
+            self.server = OptimaServer(global_rounds, stratergy, checkpt_path=checkpt_path, max_local_round = self.local_rounds)
             self.server.init_model(model)
 
             # Set up the clients for fedaboost-optima server
             for id in client_ids:
-                self.server.connect_client(OptimaClient(
+                self.server.connect_client(BoostingClient(
                     id,
                     torch.load(f"{train_data_dir}/{id}.pt"),
                     torch.load(f"{test_data_dir}/{id}.pt"),
@@ -109,6 +114,7 @@ class Federation:
                     0.01,
                     local_model=model,
                 ))
+
         elif stratergy == "fedaboost-ranker":
             test_data = []
             for id in client_ids:
@@ -121,7 +127,7 @@ class Federation:
 
             # Set up the clients for fedaboost-ranker server
             for id in client_ids:
-                self.server.connect_client(RankClient(
+                self.server.connect_client(BoostingClient(
                     id,
                     torch.load(f"{train_data_dir}/{id}.pt"),
                     torch.load(f"{test_data_dir}/{id}.pt"),
@@ -131,6 +137,7 @@ class Federation:
                     0.01,
                     local_model=model,
                 ))
+
         else:
             self.server = Server(global_rounds,stratergy,checkpt_path=checkpt_path)
             self.server.init_model(model)
@@ -146,16 +153,12 @@ class Federation:
                     0.001,
                     0.01,
                     local_model=model,
-                    local_round=self.local_rounds,
+                    local_round=local_rounds,
                 ))
 
     def train(self) -> tuple:
         """
-        Training the model.
-
-        Parameters:
-        ----------------
-        
+        Training the federated learning model.
 
         Returns:
         ----------------
@@ -163,7 +166,6 @@ class Federation:
             Trained model.
         """
         trained_model = self.server.train()
-
         return trained_model
 
     def save_models(self, model: torch.nn.Module, ckptpath: str) -> None:
@@ -227,23 +229,13 @@ if __name__ == "__main__":
     parser.add_argument("--train_data_dir", type=str, default="datasets/mnist/trainpt", help="Path to the training data directory")
     parser.add_argument("--test_data_dir", type=str, default="datasets/mnist/testpt", help="Path to the test data directory")
     parser.add_argument("--loss_function", type=str, default="FocalLoss", help="Choose a loss function from the available options; CrossEntropyLoss, FocalLoss, HybridLoss")
-    parser.add_argument("--stratergy", type=str, default="fedaboost-ranker", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
+    parser.add_argument("--stratergy", type=str, default="fedaboost-optima", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=70)
     parser.add_argument("--local_rounds", type=int, default=10)
     parser.add_argument("--save_ckpt", action="store_true")
 
     args = parser.parse_args()
-
-    if args.loss_function == "HybridLoss":
-        loss_fn = HybridLoss(focal_alpha=1, focal_gamma=2, focal_weight=0.7)
-    elif args.loss_function == "FocalLoss":
-        loss_fn = FocalLoss(alpha=1, gamma=2)
-    else:
-        loss_fn = getattr(torch.nn, args.loss_function)()
-    
-    log_summary = args.log_summary
-
 
     global_rounds = args.global_rounds
     local_rounds = args.local_rounds
@@ -254,7 +246,38 @@ if __name__ == "__main__":
     test_data_dir = args.test_data_dir
     dataset = args.dataset
 
+    # Warn if strategy is 'fedaboost-optima' or 'fedaboost-ranker' without 'FocalLoss'
+    if args.stratergy in ["fedaboost-optima", "fedaboost-ranker"] and args.loss_function != "FocalLoss":
+        warning_message = (
+            f"Warning: The strategy '{args.stratergy}' is selected without using 'FocalLoss' as the loss function. "
+            f"It is recommended to use 'FocalLoss' for better performance."
+        )
+        logging.warning(warning_message)
+        print(warning_message)  # Optionally print to console as well
+
+    if args.loss_function == "HybridLoss":
+        loss_fn = HybridLoss(focal_alpha=1, focal_gamma=2, focal_weight=0.7)
+    elif args.loss_function == "FocalLoss":
+        loss_fn = FocalLoss(alpha=1, gamma=2)
+    else:
+        loss_fn = getattr(torch.nn, args.loss_function)()
+    
+    log_summary = args.log_summary
+
     checkpt_path = f"checkpt/{stratergy}/{dataset.name}/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
+
+    log_dir = '.logs'
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = os.path.join(log_dir, f'federation_{stratergy}_{timestamp}.log')
+
+    # Setting up logging
+    logging.basicConfig(
+        filename=log_filename,  
+        level=logging.INFO,          
+        format='%(asctime)s - %(levelname)s - %(message)s',  
+        datefmt='%Y-%m-%d %H:%M:%S', 
+)
 
     client_ids = get_client_ids(train_data_dir)
 

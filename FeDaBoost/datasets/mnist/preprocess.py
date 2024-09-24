@@ -107,21 +107,11 @@ def create_clients(image_list, label_list, num_clients=20, initial='clients', sa
 
 class MNISTDataset(Dataset):
     """
-    Custom dataset class for the MNIST dataset. Supports both single datasets 
-    and concatenated datasets.
-
-    Parameters:
-        ------------
-        data_list: list or Dataset; 
-            - If it's a single dataset, use it directly.
-            - If it's a list of datasets, concatenate them.
+    Custom dataset class for the training and validation dataset.
     """
 
-    def __init__(self, data_list) -> None:
-        if isinstance(data_list, list):
-            self.data = ConcatDataset(data_list)
-        else:
-            self.data = data_list
+    def __init__(self, data) -> None:
+        self.data = data
 
     def __len__(self) -> int:
         """
@@ -200,7 +190,7 @@ def build_dataset(data_dir, saving_dir) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess the MNIST dataset.")
-    parser.add_argument("--num_clients", type=int, default=200)
+    parser.add_argument("--num_clients", type=int, default=100)
     parser.add_argument("--image_path", type=str, default="/Users/tak/Documents/BTH/MNIST/trainingSet")
     args = parser.parse_args()
 
