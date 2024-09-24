@@ -231,7 +231,7 @@ class BoostingClient(Client):
             local_model
         )
 
-    def train(self, global_round, local_round, weight:float=1, threshold=0.01, patience=1) -> tuple:
+    def train(self, global_round, max_local_round, weight:float=1, threshold=0.01, patience=1) -> tuple:
         """
         Training the model, using the fedaboost-optima strategy.
 
@@ -244,15 +244,17 @@ class BoostingClient(Client):
         ------------
         model: torch.nn.Module object; trained model
         """
-        logging.info(f"Boosting Value: {weight}")
+        logging.info(f"The client training is boosted by: {weight}")
         self.loss_fn.focal_gamma = 1.0 + math.exp( weight)
         logging.info(f"Client focal loss gamma: {self.loss_fn.focal_gamma}")  
         previous_loss_avg = float('inf')  
         no_improvement_rounds = 0  
 
         print(f"Client: {self.client_id} \tTraining...")
-        for epoch in range(local_round):
-            #print("\n")
+        logging.info(f"Client: {self.client_id} \tTraining...")
+
+        for epoch in range(max_local_round):
+            print("\n")
             batch_loss = []
             for batch_idx, (x, y) in enumerate(self.traindl):
                 x, y = x.to(self.device), y.to(self.device)
@@ -274,17 +276,20 @@ class BoostingClient(Client):
     
             loss_avg = sum(batch_loss) / len(batch_loss)    
             print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.focal_gamma}")
+            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.focal_gamma}")
 
             # Dynamic loss reduction evaluation.
             loss_reduction = previous_loss_avg - loss_avg
             if loss_reduction < threshold:
                 no_improvement_rounds += 1
                 print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
+                logging.info(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
             else:
                 pass
 
             if no_improvement_rounds >= patience:
                 print(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
+                logging.info(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
                 break
 
             previous_loss_avg = loss_avg

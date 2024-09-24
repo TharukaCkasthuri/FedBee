@@ -20,11 +20,13 @@ Published in:
 
 import torch
 import os
+import logging
+
 import pandas as pd
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
-from utils import get_alpha,get_weights, influence_alpha, adjust_local_epochs, get_device
+from utils import get_alpha,get_weights, influence_alpha, adjust_local_epochs, get_device, z_scores
 
 from datasets.femnist.preprocess import FEMNISTDataset
 from datasets.mnist.preprocess import MNISTDataset
@@ -210,7 +212,7 @@ class Server:
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
-
+            logging.info(f"\n | Global Training Round : {round} |\n")
             loss_item = 0
             for client in self.client_dict.values():
                 client.set_model(self.global_model.state_dict())
@@ -390,8 +392,11 @@ class OptimaServer(Server):
     
     """
 
-    def __init__(self, rounds: int, strategy: callable, checkpt_path:str=None,  log_dir:str = 'runs') -> None:
+    def __init__(self, rounds: int, strategy: callable, checkpt_path:str=None,  log_dir:str = 'runs', max_local_round = 10) -> None:
         super().__init__(rounds, strategy, checkpt_path, log_dir)
+        self.max_local_round = max_local_round
+        logging.info("FedaBoost-Optima Boosting Server Initialized")
+
 
     def __aggregate(self, weights = None) -> None:
         """
@@ -415,7 +420,6 @@ class OptimaServer(Server):
         self.global_model = weighted_avg(self.global_model, client_models, weights)
         updated_params = [p.clone() for p in self.global_model.parameters()]
         updated = self._check_model_update(prev_params, updated_params)
-
         return self.global_model, updated
 
 
@@ -435,64 +439,57 @@ class OptimaServer(Server):
             Trained model
         """
         consecutive_no_update_rounds = 0
-        consecutive_loss_change_rounds = 0
-        prev_global_loss = 999999999
-        stats = []
 
         weights_dict = {client: (1 / len(self.client_dict)) for client in self.client_dict}
-        print(f"Initial Weights: {weights_dict}")
+        boost_dict = {client: 0 for client in self.client_dict}
 
+        logging.info(f"Initial Weights: {weights_dict}")
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
-            local_loss = {}
+            logging.info(f"\n | Global Training Round : {round} |\n")
+            local_err = {}
+
             for client in self.client_dict.values():
-                prev_client_loss, _ = client.evaluate()
                 client.set_model(self.global_model.state_dict())
-                updated_client_loss, _ = client.evaluate()
-                epoch = adjust_local_epochs(prev_client_loss, updated_client_loss)
-                local_loss[client.client_id] = abs(updated_client_loss)#*weights_dict[client.client_id]
+                error_rate = client.get_error_rate()
+                local_err[client.client_id] = error_rate
+                logging.info(f"Client {client.client_id} Error rate: {error_rate}")
 
-                # Training the client model for the specified number of local rounds, using the local data.
-                _ = client.train(round, epoch, weights_dict[client.client_id])
-
+                _ = client.train(global_round= round, max_local_round = self.max_local_round, weight = boost_dict[client.client_id])
                 self._receive(client)
 
-            print(f"Local Loss: {local_loss}")
-
-            alphas = get_alpha(local_loss)
+            print(f"Local Error Rate: {local_err}")
+            logging.info(f"Local Error Rate: {local_err}")
+            alphas = get_alpha(local_err)
+            logging.info(f"Initial Alpha: {alphas}")
             final_alpha = influence_alpha(0.5, alphas)
+            logging.info(f"Final Alpha: {final_alpha}")
             weights_dict = get_weights(final_alpha, weights_dict)
-            self.global_model, update_status = self.__aggregate(alphas.values())
+            logging.info(f"Updated Weights using final alpha: {weights_dict}")
+            boost_dict = z_scores(weights_dict)
+            logging.info(f"Boosting values - z-scores of weights: {boost_dict}")
+
+            self.global_model, update_status = self.__aggregate(final_alpha.values())
 
             self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
 
-
             print(f"Model Updated: {update_status}")
-
-            if consecutive_loss_change_rounds == 3:
-                print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
-                break
+            logging.info(f"Model Updated Successfully using Fedaboost-Optima: {update_status}")
 
             self._broadcast(self.global_model)
             
             if not update_status:
                 consecutive_no_update_rounds += 1
                 print("The global model parameters have not been updated, so the training has converged.")
+                logging.info("The global model parameters have not been updated, so the training has converged. Might be some issue with the model aggregation.")
             else:
                 consecutive_no_update_rounds = 0
 
             if consecutive_no_update_rounds == 3:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
+                logging.info("The global model parameters have not been updated for 3 consecutive rounds. Hence, stopping the training.")
                 break
-
-        if self.stratergy == "fedaboost":
-            file_name = "stats/fedaboost_stats_mnist.csv"
-            self._save_stats(stats, file_name)
-            print(f"Saved the training statistics to {file_name}")
-
-        # Close the TensorBoard writer
-        self.writer.close()
 
         return self.global_model
     
@@ -589,27 +586,22 @@ class RankServer(Server):
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
-            local_loss = {}
+
             for client in self.client_dict.values():
-                prev_client_loss, _ = client.evaluate()
                 client.set_model(self.global_model.state_dict())
                 updated_client_loss, _ = client.evaluate()
-                epoch = adjust_local_epochs(prev_client_loss, updated_client_loss)
-                local_loss[client.client_id] = abs(updated_client_loss)#*weights_dict[client.client_id]
-
+                
                 # Training the client model for the specified number of local rounds, using the local data.
-                _ = client.train(round, epoch, weights_dict[client.client_id])
-
+                _ = client.train(round, 5, weights_dict[client.client_id])
                 self._receive(client)
 
 
-            self.global_model,weights_dict, update_status = self.__aggregate(weights_dict)
+            self.global_model, weights_dict, update_status = self.__aggregate(weights_dict)
 
             self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
 
 
             print(f"Model Updated: {update_status}")
-
             if consecutive_loss_change_rounds == 3:
                 print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
                 break
@@ -644,19 +636,21 @@ class RankServer(Server):
 
         Parameters:
         ----------------
-        None
+        model: torch.nn.Module object;
+            Model to be evaluated
 
         Returns:
         ----------------
         loss: float
             Loss of the model
-        f1: float
-            F1 score of the model
         """
         batch_loss = []
 
         for _, (x, y) in enumerate(self.test_dataloader):
             x, y = x.to(self.device), y.to(self.device)
+            x = x.clone().detach().float()  
+            y = y.clone().detach().long()   
+
             outputs = model(x)
             if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.test_dataset, FEMNISTDataset):
                 y = y.view(-1)
