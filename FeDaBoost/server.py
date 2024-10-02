@@ -19,10 +19,12 @@ Published in:
 """
 
 import torch
+import random
 import os
 import logging
 
 import pandas as pd
+import numpy as np
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
@@ -79,6 +81,7 @@ class Server:
         # Initialize TensorBoard writer
         self.writer = SummaryWriter(log_dir=log_dir)
 
+
     def init_model(self, model: torch.nn.Module) -> None:
         """
         Initialize the model for federated learning.
@@ -96,6 +99,7 @@ class Server:
         self.global_model.train()
         self.global_model.to("mps:0")
 
+
     def connect_client(self, client: Client) -> None:
         """
         Add a client for federated learning setup.
@@ -112,11 +116,31 @@ class Server:
         
         client_id = client.client_id
         self.client_dict[client_id] = client
-        
 
-    def _aggregate(self, weights = None) -> None:
+
+    def sample_clients(self, num_clients: int) -> dict:
         """
-        Aggregate the models of the clients.
+        Sample clients from the client dictionary.
+
+        Parameters:
+        ----------------
+        num_clients: int;
+            Number of clients to sample
+
+        Returns:
+        ----------------
+        list
+            Dict of sampled clients
+        """
+        sampled_client_ids = np.random.choice(list(self.client_dict.keys()), num_clients, replace=False)
+        sampled_clients = {client_id: self.client_dict[client_id] for client_id in sampled_client_ids}
+  
+        return sampled_clients
+
+
+    def _aggregate(self,trained_clients, weights = None) -> None:
+        """
+        Aggregate the models of the clients.     
 
         Parameters:
         ----------------
@@ -132,11 +156,10 @@ class Server:
         """
 
         prev_params = [p.clone() for p in self.global_model.parameters()]
-
-        client_models = [client.get_model() for client in self.client_dict.values()]
+        client_models = [client.get_model() for client in trained_clients.values()]
 
         aggregation_functions = {
-        "fedavg": fedAvg,
+        "fedavg": weighted_avg,
         "fedprox": fedProx,
         "fedaboost-optima": weighted_avg,
         "fedaboost-ranker": weighted_avg,
@@ -148,10 +171,7 @@ class Server:
         if aggregation_function is None:
             raise ValueError(f"Unsupported aggregation strategy: {self.stratergy}")
         
-        if self.stratergy == "fedaboost-optima" or self.stratergy == "fedaboost-ranker" or self.stratergy == "fedaboost-concord":
-            self.global_model = aggregation_function(self.global_model, client_models, weights)
-        else:
-            self.global_model = aggregation_function(self.global_model, client_models)
+        self.global_model = aggregation_function(self.global_model, client_models, weights)
 
         updated_params = [p.clone() for p in self.global_model.parameters()]
 
@@ -205,25 +225,30 @@ class Server:
         """
         consecutive_no_update_rounds = 0
         consecutive_loss_change_rounds = 0
-        prev_global_loss = 999999999
         stats = []
 
-        global_loss = []
         for round in range(1,self.rounds+1):
             update_status = False
             print(f"\n | Global Training Round : {round} |\n")
             logging.info(f"\n | Global Training Round : {round} |\n")
             loss_item = 0
-            for client in self.client_dict.values():
+            num_data_points = {}
+
+            train_clients = self.sample_clients(random.randint(10, 20))
+            logging.info(f"Selected Clients: {train_clients.keys()}")
+
+            for client in train_clients.values():
                 client.set_model(self.global_model.state_dict())
                 loss, f1 = client.evaluate()
                 loss_item += loss
-                _ = client.train(round)
+                _ = client.train(round,10)
+                num_data_points[client.client_id] = client.get_num_datapoints()
                 self._receive(client)
 
-            global_loss.append((loss_item/len(self.client_dict.values())))
+            total_data_points = sum(num_data_points[client.client_id] for client in train_clients.values())
+            weights = [num_data_points[client.client_id] / total_data_points for client in train_clients.values()]
 
-            self.global_model, update_status = self._aggregate()
+            self.global_model, update_status = self._aggregate(train_clients, weights=weights)
 
             self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
 
@@ -245,11 +270,6 @@ class Server:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
         
-        # convert the global loss to a CSV file
-        global_loss_csv = pd.DataFrame(global_loss)
-        file_name = "stats/fedavg_stats_mnist.csv"
-        self._save_stats(global_loss_csv, file_name)
-
         # Close the TensorBoard writer
         self.writer.close()
 

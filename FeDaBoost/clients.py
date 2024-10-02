@@ -78,6 +78,13 @@ class Client:
         self.local_model = local_model.to(self.device)
         self.train_dataset = train_dataset
         self.local_round = local_round
+        self.datapoints = len(train_dataset)
+
+    def get_num_datapoints(self) -> int:
+        """
+        Get the number of samples in the training dataset.
+        """
+        return self.datapoints
 
     def set_model(self, model_weights) -> None:
         """
@@ -103,28 +110,26 @@ class Client:
         """
         return self.local_model
 
-    def train(self, global_round) -> tuple:
+    def train(self, global_round, max_local_round, threshold=0.01, patience=1) -> tuple:
         """
-        Training the model.
-    
+        Training the model, using the fedaboost-optima strategy.
+
         Parameters:
         ------------
         model: torch.nn.Module object; model to be trained
         loss_fn: torch.nn.Module object; loss function
-        optimizer: torch.optim object; optimizer
-        epoch: int; epoch number
-    
+
         Returns:
         ------------
         model: torch.nn.Module object; trained model
-        loss_avg: float; average loss
         """
-        train_losses = []
+        previous_loss_avg = float('inf')  
+        no_improvement_rounds = 0  
 
         print(f"Client: {self.client_id} \tTraining...")
-        print(self.local_round)
+        logging.info(f"Client: {self.client_id} \tTraining...")
 
-        for epoch in range(self.local_round):
+        for epoch in range(max_local_round):
             print("\n")
             batch_loss = []
             for batch_idx, (x, y) in enumerate(self.traindl):
@@ -145,11 +150,27 @@ class Client:
     
                 batch_loss.append(loss.item())
     
-            loss_avg = sum(batch_loss) / len(batch_loss)
-            train_losses.append(loss_avg)
-    
+            loss_avg = sum(batch_loss) / len(batch_loss)    
             print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round}")
-        return self.local_model, train_losses
+            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round}")
+
+            # Dynamic loss reduction evaluation.
+            loss_reduction = previous_loss_avg - loss_avg
+            if loss_reduction < threshold:
+                no_improvement_rounds += 1
+                print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
+                logging.info(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
+            else:
+                pass
+
+            if no_improvement_rounds >= patience:
+                print(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
+                logging.info(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
+                break
+
+            previous_loss_avg = loss_avg
+
+        return self.local_model
 
     def evaluate(self) -> tuple:
         """
@@ -245,7 +266,7 @@ class BoostingClient(Client):
         model: torch.nn.Module object; trained model
         """
         logging.info(f"The client training is boosted by: {weight}")
-        self.loss_fn.focal_gamma = 1.0 + math.exp( weight)
+        self.loss_fn.focal_gamma = 3.0 + weight
         logging.info(f"Client focal loss gamma: {self.loss_fn.focal_gamma}")  
         previous_loss_avg = float('inf')  
         no_improvement_rounds = 0  
@@ -311,7 +332,7 @@ class BoostingClient(Client):
             x, y = x.to(self.device), y.to(self.device)
             outputs = self.local_model(x)
 
-            if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+            if isinstance(self.train_dataset, FEMNISTDataset):
                 y = y.view(-1)
             elif isinstance(self.train_dataset, MNISTDataset):
                 y = torch.argmax(y, dim=1)
@@ -325,6 +346,8 @@ class BoostingClient(Client):
 
         # Error rate as the proportion of incorrect predictions
         error_rate = incorrect_preds / total_samples if total_samples > 0 else 0
+
+        logging.info(f"Client: {self.client_id} \tError Rate: {error_rate}")
 
         return error_rate
 
