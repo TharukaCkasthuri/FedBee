@@ -143,7 +143,7 @@ class MNISTDataset(Dataset):
     
 def build_dataset(data_dir, saving_dir) -> None:
     """
-    Split the pickles into train and test, saving as a PyTorch dataset.
+    Split the pickles into train and test, saving as a PyTorch dataset with stratified split.
 
     Parameters:
     ------------
@@ -168,16 +168,20 @@ def build_dataset(data_dir, saving_dir) -> None:
         with open(pickle_file, 'rb') as f:
             data = pickle.load(f)
 
-        # Split the data into train and test sets
-        train_data, test_data = train_test_split(data, test_size=0.2, random_state=42)
+        # Extract labels for stratification
+        labels = [label for _, label in data]  # Assuming data is a list of (image, label) tuples
+
+        # Perform stratified split to ensure class balance
+        train_data, test_data = train_test_split(data, test_size=0.2, random_state=42, stratify=labels)
 
         # Create the datasets
         train_dataset = MNISTDataset(train_data)
         test_dataset = MNISTDataset(test_data)
 
         # Save the datasets
-        trainpt_dir = os.path.join(saving_dir, f"trainpt")
-        testpt_dir = os.path.join(saving_dir, f"testpt")
+        trainpt_dir = os.path.join(saving_dir, "trainpt")
+        testpt_dir = os.path.join(saving_dir, "testpt")
+        
         if not os.path.exists(trainpt_dir):
             os.makedirs(trainpt_dir)
         if not os.path.exists(testpt_dir):
@@ -186,11 +190,11 @@ def build_dataset(data_dir, saving_dir) -> None:
         torch.save(train_dataset, os.path.join(trainpt_dir, f"{id}.pt"))
         torch.save(test_dataset, os.path.join(testpt_dir, f"{id}.pt"))
 
-        print(f"Saved { os.path.join(trainpt_dir, f"{id}.pt")} and {os.path.join(testpt_dir, f"{id}.pt")}")
+        print(f"Saved {os.path.join(trainpt_dir, f'{id}.pt')} and {os.path.join(testpt_dir, f'{id}.pt')}")
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess the MNIST dataset.")
-    parser.add_argument("--num_clients", type=int, default=100)
+    parser.add_argument("--num_clients", type=int, default=200)
     parser.add_argument("--image_path", type=str, default="/Users/tak/Documents/BTH/MNIST/trainingSet")
     args = parser.parse_args()
 

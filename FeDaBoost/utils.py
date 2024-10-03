@@ -138,7 +138,7 @@ def get_alpha_emp(error_fun: list, num_classes: int = 10, emphasis_factor: float
     return alpha
 
 
-def get_alpha(error_fun: dict, num_classes: int = 10):
+def get_alpha(error_fun: dict, num_classes: int = 10) -> dict:
     """
     Calculate adjusted weights for a set of weak classifiers in AdaBoost, 
     giving higher weights to classifiers with lower errors.
@@ -169,6 +169,30 @@ def get_alpha(error_fun: dict, num_classes: int = 10):
     # Normalize alpha values
     alpha_sum = np.sum(list(alpha.values()))
     #alpha = {key: value / alpha_sum for key, value in alpha.items()}
+    return alpha
+
+
+def get_alpha_single(error: float, num_classes: int = 10)->float:
+    """
+    Calculate adjusted weights for a single client in the FL setting, 
+    giving higher weights to clients with lower errors with the global model.
+
+    Parameters:
+    - error_fun: Error value for the client validation data with the global model.
+    - num_classes: Number of classes (default is 10).
+
+    Returns:
+    - Adjusted weight (alpha) for the client.
+    """
+    if 0 < error < 1:
+        alpha = 0.5 * np.log((1 - error) / (error)) + np.log(num_classes - 1)
+    elif error == 1:
+        alpha = 1
+    elif error == 0:
+        alpha = 0
+    else:
+        raise ValueError("Error value must be in the range [0, 1].")
+
     return alpha
 
 
@@ -289,6 +313,3 @@ def z_scores(weight_dict):
     z_scores = {key: (value - mean) / std_dev for key, value in weight_dict.items()}
     
     return z_scores
-
-
-
