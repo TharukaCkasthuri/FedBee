@@ -22,6 +22,7 @@ Published in:
 import torch
 import math
 import logging
+import numpy as np
 
 from torch.utils.data import DataLoader
 from utils import get_device
@@ -43,7 +44,6 @@ class Client:
     learning_rate: float; learning rate
     weight_decay: float; weight decay
     local_model: torch.nn.Module object; model
-    local_round: int; number of local rounds
     """
 
     def __init__(
@@ -56,7 +56,6 @@ class Client:
         learning_rate: float,
         weight_decay: float,
         local_model: object = None,
-        local_round: int = 1,
     ) -> None:
 
         self.client_id: str = client_id
@@ -77,7 +76,6 @@ class Client:
         self.local_model = local_model
         self.local_model = local_model.to(self.device)
         self.train_dataset = train_dataset
-        self.local_round = local_round
         self.datapoints = len(train_dataset)
 
     def get_num_datapoints(self) -> int:
@@ -110,18 +108,18 @@ class Client:
         """
         return self.local_model
 
-    def train(self, global_round, max_local_round, threshold=0.01, patience=1) -> tuple:
+    def train(self, global_round:int, max_local_round:int, threshold:float, patience:int) -> tuple:
         """
         Training the model, using the fedaboost-optima strategy.
 
         Parameters:
         ------------
-        model: torch.nn.Module object; model to be trained
-        loss_fn: torch.nn.Module object; loss function
+        model: torch.nn.Module object; model to be trained.
+        loss_fn: torch.nn.Module object; loss function.
 
         Returns:
         ------------
-        model: torch.nn.Module object; trained model
+        model: torch.nn.Module object; trained model.
         """
         previous_loss_avg = float('inf')  
         no_improvement_rounds = 0  
@@ -252,7 +250,7 @@ class BoostingClient(Client):
             local_model
         )
 
-    def train(self, global_round, max_local_round, weight:float=1, threshold=0.01, patience=1) -> tuple:
+    def train(self, global_round, max_local_round, weight:float=1, threshold=0.01, patience=2) -> tuple:
         """
         Training the model, using the fedaboost-optima strategy.
 
@@ -266,8 +264,9 @@ class BoostingClient(Client):
         model: torch.nn.Module object; trained model
         """
         logging.info(f"The client training is boosted by: {weight}")
-        self.loss_fn.focal_gamma = 3.0 + weight
-        logging.info(f"Client focal loss gamma: {self.loss_fn.focal_gamma}")  
+        self.loss_fn.gamma = 2 + 6 /( 1+ math.exp(weight))
+        self.loss_fn.alpha = 1 + 6 / (1 + math.exp(weight))
+        logging.info(f"Client focal loss gamma: {self.loss_fn.gamma}")  
         previous_loss_avg = float('inf')  
         no_improvement_rounds = 0  
 
@@ -296,8 +295,8 @@ class BoostingClient(Client):
                 batch_loss.append(loss.item())
     
             loss_avg = sum(batch_loss) / len(batch_loss)    
-            print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.focal_gamma}")
-            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.focal_gamma}")
+            print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {self.loss_fn.alpha}")
+            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {self.loss_fn.alpha}")
 
             # Dynamic loss reduction evaluation.
             loss_reduction = previous_loss_avg - loss_avg
@@ -328,7 +327,7 @@ class BoostingClient(Client):
         incorrect_preds = 0
         total_samples = 0
 
-        for _, (x, y) in enumerate(self.valdl):
+        for _, (x, y) in enumerate(self.traindl):
             x, y = x.to(self.device), y.to(self.device)
             outputs = self.local_model(x)
 
@@ -348,8 +347,32 @@ class BoostingClient(Client):
         error_rate = incorrect_preds / total_samples if total_samples > 0 else 0
 
         logging.info(f"Client: {self.client_id} \tError Rate: {error_rate}")
-
+        print(type(error_rate))
         return error_rate
+    
+    def get_alpha(self, error_rate: float, num_classes: int = 10) -> float:
+        """
+        Calculate adjusted weights for client in the FL setting, 
+        giving higher weights to clients with lower errors with the global model.
+
+        Parameters:
+        - error: Error value for the client validation data with the global model.
+        - num_classes: Number of classes (default is 10).
+
+        Returns:
+        - Adjusted weight (alpha) for the client.
+        """
+        print(type(error_rate))
+        if 0 < error_rate < 1:
+            alpha = 0.5 * np.log((1 - error_rate) / (error_rate)) + np.log(num_classes - 1)
+        elif error_rate == 1:
+            alpha = 1
+        elif error_rate == 0:
+            alpha = 0
+        else:
+            raise ValueError("Error value must be in the range [0, 1].")
+
+        return alpha
 
 
     

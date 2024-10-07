@@ -87,7 +87,7 @@ def fedProx(global_model: torch.nn.Module, local_models: List[torch.nn.Module], 
     
     return global_model
 
-def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float]):
+def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float])-> torch.nn.Module:
     """
     Average model parameters using weighted averaging.
         
@@ -106,12 +106,14 @@ def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Modu
         Updated global model.
     """
     state_dicts = [model.state_dict() for model in local_models]
+    normalized_weights = [weight / sum(weights) for weight in weights]
 
-    for key in global_model.state_dict().keys():
-        stacked_params = torch.stack(
-            [state_dict[key] * weight for state_dict, weight in zip(state_dicts, weights)], dim=0
-        )
+    with torch.no_grad():  
+        for key in global_model.state_dict().keys():
+            stacked_params = torch.stack(
+                [state_dict[key] * normalized_weights[i] for i, (state_dict) in enumerate(state_dicts)], dim=0
+            )
 
-        global_model.state_dict()[key].data.copy_(stacked_params.sum(dim=0) / sum(weights))
+            global_model.state_dict()[key].copy_(stacked_params.sum(dim=0))  
 
     return global_model
