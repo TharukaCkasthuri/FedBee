@@ -138,6 +138,20 @@ class MNISTDataset(Dataset):
         """
         image, label = self.data[idx]
         return torch.tensor(image, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
+    
+    def num_classes(self) -> int:
+        """
+        Returns the number of unique classes in the dataset.
+
+        Returns:
+        ------------
+        num_classes: int; number of unique labels in the dataset
+        """
+        # Extract labels from the dataset
+        labels = [label for _, label in self.data]
+        unique_classes = torch.unique(torch.tensor(labels))
+        return len(unique_classes)
+    
 
 
     

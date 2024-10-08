@@ -250,7 +250,9 @@ class BoostingClient(Client):
             local_model
         )
 
-    def train(self, global_round, max_local_round, weight:float=1, threshold=0.01, patience=2) -> tuple:
+        self.num_classes = train_dataset.num_classes()
+
+    def train(self, global_round, max_local_round, threshold=0.01, patience=2, weight:float=1) -> tuple:
         """
         Training the model, using the fedaboost-optima strategy.
 
@@ -350,7 +352,7 @@ class BoostingClient(Client):
         print(type(error_rate))
         return error_rate
     
-    def get_alpha(self, error_rate: float, num_classes: int = 10) -> float:
+    def get_alpha(self, error_rate: float) -> float:
         """
         Calculate adjusted weights for client in the FL setting, 
         giving higher weights to clients with lower errors with the global model.
@@ -364,7 +366,7 @@ class BoostingClient(Client):
         """
         print(type(error_rate))
         if 0 < error_rate < 1:
-            alpha = 0.5 * np.log((1 - error_rate) / (error_rate)) + np.log(num_classes - 1)
+            alpha = np.log((1 - error_rate) / (error_rate)) + np.log(self.num_classes - 1)
         elif error_rate == 1:
             alpha = 1
         elif error_rate == 0:
