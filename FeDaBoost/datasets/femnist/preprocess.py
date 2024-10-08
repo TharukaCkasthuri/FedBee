@@ -108,6 +108,17 @@ class FEMNISTDataset(Dataset):
         sample_x = self.x[idx]
         sample_y = self.y[idx]
         return torch.tensor(sample_x, dtype=torch.float32), torch.tensor(sample_y, dtype=torch.long)
+    
+    def num_classes(self) -> int:
+        """
+        Returns the number of unique classes in the dataset.
+
+        Returns:
+        ------------
+        num_classes: int; number of unique labels in the dataset
+        """
+        unique_classes = torch.unique(torch.tensor(self.y))
+        return len(unique_classes)
 
 def main():
 
