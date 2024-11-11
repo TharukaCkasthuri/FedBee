@@ -220,13 +220,14 @@ def get_weights(alpha: dict, prev_weights: dict):
     return new_weights
 
 
-def influence_alpha(lambda_param:float, alphas:dict)->dict:
+def influence_alpha(lambda_param: float, alphas: dict, cons: int) -> dict:
     """
     Calculate the influence of alpha values in AdaBoost based on local and global performance.
 
     Parameters:
     - lambda_param: Influence factor (lambda), a value between 0 and 1.
     - alphas: Dictionary of initial alpha values, {client_id: alpha_j_initial}.
+    - cons: Constant to add to each alpha before calculating averages.
 
     Returns:
     - A dictionary with the adjusted alpha values, {client_id: adjusted_alpha_j}.
@@ -236,9 +237,11 @@ def influence_alpha(lambda_param:float, alphas:dict)->dict:
     final_alphas = {}  
     
     for client, alpha_initial in alphas.items():
-        other_alphas_avg = sum(alpha for other_client, alpha in alphas.items() if other_client != client) / (k - 1)
+        # Add the constant to each alpha before averaging
+        other_alphas_avg = sum(alpha + cons for other_client, alpha in alphas.items() if other_client != client) / (k - 1)
         
-        adjusted_alpha = lambda_param * alpha_initial + (1 - lambda_param) * other_alphas_avg
+        # Calculate the adjusted alpha with the influence factor
+        adjusted_alpha = lambda_param * (alpha_initial + cons) + (1 - lambda_param) * other_alphas_avg
         final_alphas[client] = adjusted_alpha
     
     return final_alphas
@@ -313,3 +316,4 @@ def z_scores(weight_dict):
     z_scores = {key: (value - mean) / std_dev for key, value in weight_dict.items()}
     
     return z_scores
+

@@ -237,6 +237,7 @@ class BoostingClient(Client):
         learning_rate: float,
         weight_decay: float,
         local_model: object = None,
+        num_classes: int = 10,
     ) -> None:
         
         super().__init__(
@@ -250,12 +251,12 @@ class BoostingClient(Client):
             local_model
         )
 
-        self.num_classes = train_dataset.num_classes()
-        self.alpha_range = self.__get_alpha_range(self.num_classes)
-        self.eta = 1
-        self.error_threshold = 0.5
+        self.eta = 0.1
+        self.error_threshold = 0.4
+        self.num_classes = num_classes
+        self.loss_fn.gamma = 1
 
-    def train(self, global_round, max_local_round, threshold=0.01, patience=2, weight:float=1) -> tuple:
+    def train(self, global_round, max_local_round, threshold=0.01, patience=2) -> tuple:
         """
         Training the model, using the fedaboost-optima strategy.
 
@@ -269,15 +270,21 @@ class BoostingClient(Client):
         model: torch.nn.Module object; trained model.
         """
 
-        alpha = self.get_alpha()
-        error_rate = self.__get_error_rate()
+        error_rate, alpha = self.get_alpha()
         self.weight =self.update_weight(alpha, performance_indicator = (error_rate > self.error_threshold))
 
         print(f"The client training is boosted by: {self.weight}")
+        logging.info(f"The client training is boosted by: {self.weight}")
 
-        self.loss_fn.gamma = 1 + math.exp(self.weight)
-        self.loss_fn.alpha = 1
-        logging.info(f"Client focal loss gamma: {self.loss_fn.gamma}")  
+        if global_round == 1:
+            pass
+        else:
+            if (error_rate > self.error_threshold):   
+                new_gamma = min((self.weight + self.loss_fn.gamma), 3)
+                self.loss_fn.update_gamma(new_gamma)
+
+        logging.info(f"Client focal loss gamma: {self.loss_fn.gamma}")
+
         previous_loss_avg = float('inf')  
         no_improvement_rounds = 0  
 
@@ -291,7 +298,7 @@ class BoostingClient(Client):
                 x, y = x.to(self.device), y.to(self.device)
                 outputs = self.local_model(x)
 
-                if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+                if isinstance(self.train_dataset, FEMNISTDataset):
                     y = y.view(-1)
                 elif isinstance(self.train_dataset, MNISTDataset):
                     y = torch.argmax(y, dim=1)
@@ -307,10 +314,11 @@ class BoostingClient(Client):
     
             loss_avg = sum(batch_loss) / len(batch_loss)    
             print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {alpha}")
-            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {self.loss_fn.alpha}")
+            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {alpha}")
 
             # Dynamic loss reduction evaluation.
             loss_reduction = previous_loss_avg - loss_avg
+
             if loss_reduction < threshold:
                 no_improvement_rounds += 1
                 print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
@@ -356,11 +364,9 @@ class BoostingClient(Client):
 
         # Error rate as the proportion of incorrect predictions
         error_rate = incorrect_preds / total_samples if total_samples > 0 else 0
-
-        logging.info(f"Client: {self.client_id} \tError Rate: {error_rate}")
         return error_rate
     
-    def get_alpha(self) -> float:
+    def get_alpha(self):
         """
         Calculate adjusted weights for client in the FL setting, 
         giving higher weights to clients with lower errors with the global model.
@@ -375,41 +381,15 @@ class BoostingClient(Client):
         logging.info(f"Client {self.client_id} Error rate: {error_rate}")
 
         if 0 < error_rate < 1:
-            alpha = np.log((1 - error_rate) / (error_rate)) + np.log(10 - 1)
+            alpha = np.log((1 - error_rate) / (error_rate)) + np.log(self.num_classes - 1)
         elif error_rate == 1:
-            alpha = np.log((1 - (1-1e-6)) / (1-1e-6)) + np.log(10 - 1)
+            alpha = np.log((1 - (1-1e-6)) / (1-1e-6)) + np.log(self.num_classes - 1)
         elif error_rate == 0:
-            alpha = np.log((1 - 1e-6) / (1e-6)) + np.log(10 - 1)
+            alpha = np.log((1 - 1e-6) / (1e-6)) + np.log(self.num_classes - 1)
         else:
             raise ValueError("Error value must be in the range [0, 1].")
 
-        return alpha
-    
-    def __get_alpha_range(self, num_classes=10) -> tuple:
-        """
-        This function calculates the range of alpha for a given number of classes
-        using the calculate_alpha function.
-        """
-        
-        # Calculate alpha for error rates close to 0 and close to 1
-        alpha_min = np.log((1 - (1-1e-6)) / (1-1e-6))   # Error rate close to 1
-        alpha_max = np.log((1 - 1e-6) / (1e-6)) + np.log(62 - 1)    # Error rate close to 0
-        
-        return (alpha_min, alpha_max)
-
-    def map_alpha(self, alpha, original_range, target_min=0, target_max=3):
-        """
-        Maps the alpha value from the original range [original_min, original_max] 
-        to the target range [target_min, target_max].
-        """
-
-        original_min, original_max = original_range
-        original_min = -original_min
-        original_max = -original_max
-        
-        # Linear transformation to map alpha to the target range
-        mapped_alpha = ((alpha - original_min) * (target_max - target_min)) / (original_max - original_min) + target_min
-        return mapped_alpha
+        return error_rate, alpha
     
     def set_weight(self, weight:float) -> None:
         """
@@ -430,5 +410,5 @@ class BoostingClient(Client):
         ------------
         weight: float; weight
         """
-        self.weight = self.weight * math.exp(float(self.eta) * float(alpha) * int(performance_indicator))
+        self.weight = self.weight * math.exp(float(self.eta) * -float(alpha) * int(performance_indicator))
         return self.weight

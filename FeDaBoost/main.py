@@ -18,6 +18,7 @@ Paper: [FeDBee: AdaBoost Enhanced Federated Learning]
 Published in: 
 """
 import os
+import json
 import time
 import logging
 import argparse
@@ -46,10 +47,10 @@ def load_config(config_path="config.cfg"):
     config.read(config_path)
     return config
 
-def setup_logging(stratergy, timestamp):
+def setup_logging(stratergy,dataset, timestamp):
     log_dir = '.logs'
     os.makedirs(log_dir, exist_ok=True)
-    log_filename = os.path.join(log_dir, f'federation_{stratergy}_{timestamp}.log')
+    log_filename = os.path.join(log_dir, f'federation__{dataset}_{stratergy}_{timestamp}.log')
     
     logging.basicConfig(
         filename=log_filename,
@@ -62,15 +63,13 @@ def setup_logging(stratergy, timestamp):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Federated training parameters")
     parser.add_argument("--dataset", type=dataset_enum, default="femnist", help="Choose a dataset from the available options; femnist, mnist, kv")
-    parser.add_argument("--train_data_dir", type=str, default="datasets/femnist/trainpt", help="Path to the training data directory")
-    parser.add_argument("--test_data_dir", type=str, default="datasets/femnist/testpt", help="Path to the test data directory")
+    parser.add_argument("--data_dir", type=str, default="datasets/femnist/", help="Path to the data directory, expected to have train and test directories with names trainpt and testpt respectively." )
     parser.add_argument("--loss_function", type=str, default="FocalLoss", help="Choose a loss function from the available options; CrossEntropyLoss, FocalLoss, HybridLoss")
     parser.add_argument("--stratergy", type=str, default="fedaboost-optima", help="Choose a federated learning stratergy from the available options; fedavg, fedprox, fedaboost")
     parser.add_argument("--log_summary", action="store_true")
     parser.add_argument("--global_rounds", type=int, default=100)
-    parser.add_argument("--local_rounds", type=int, default=10)
+    parser.add_argument("--local_rounds", type=int, default=3)
     parser.add_argument("--save_ckpt", action="store_true")
-
     return parser.parse_args()
 
 class Federation:
@@ -96,6 +95,7 @@ class Federation:
         loss_fn: torch.nn.Module,
         train_data_dir: str,
         test_data_dir: str,
+        num_classes: int,
         global_rounds: int,
         stratergy: callable,
         learning_rate: float,
@@ -104,6 +104,7 @@ class Federation:
     ) -> None:
         
         self.client_ids = client_ids
+        self.num_classes = num_classes
         self.model = model
         self.loss_fn = loss_fn
         self.global_rounds = global_rounds
@@ -127,6 +128,7 @@ class Federation:
                     self.learning_rate,
                     self.weight_decay,
                     local_model=self.model,
+                    num_classes=self.num_classes,
                 ))
 
         elif stratergy == "fedavg":
@@ -148,7 +150,7 @@ class Federation:
         else:
                 raise ValueError(f"Invalid stratergy. Choose from: {', '.join([stratergy.value for stratergy in Stratergy])}")
 
-    def train(self, min_clients:int, max_clients:int, max_local_round:int = 10, threshold:float = 0.01, patience = 2) -> tuple:
+    def train(self, training_samples, max_local_round:int = 10, threshold:float = 0.01, patience = 2, alpha_constant=12) -> tuple:
         """
         Training the federated learning model.
 
@@ -159,7 +161,10 @@ class Federation:
         """
         print(threshold)
         print(type(threshold))
-        trained_model = self.server.train(min_clients, max_clients, max_local_round,threshold, patience)
+        if self.stratergy == "fedaboost-optima":
+            trained_model = self.server.train(training_samples, max_local_round,threshold, patience, alpha_constant)
+        else:
+            trained_model = self.server.train(training_samples, max_local_round,threshold, patience)
         return trained_model
 
     def save_models(self, model: torch.nn.Module, ckptpath: str) -> None:
@@ -219,7 +224,7 @@ if __name__ == "__main__":
     config = load_config()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = setup_logging(args.stratergy, timestamp)
+    log_filename = setup_logging(args.stratergy, args.dataset, timestamp)
 
     loss_threshould = float(config['GENERAL']['loss_threshould'])
     patience = int(config['GENERAL']['patience'])
@@ -229,9 +234,12 @@ if __name__ == "__main__":
     epochs = global_rounds * local_rounds
     save_ckpt = args.save_ckpt
     stratergy = args.stratergy
-    train_data_dir = args.train_data_dir
-    test_data_dir = args.test_data_dir
+    data_dir = args.data_dir
     dataset = args.dataset
+
+    train_data_dir = f"{data_dir}/trainpt"
+    test_data_dir = f"{data_dir}/testpt"
+
 
     # Warn if strategy is 'fedaboost-optima' or 'fedaboost-ranker' without 'FocalLoss'
     if args.stratergy in ["fedaboost-optima", "fedaboost-ranker"] and args.loss_function != "FocalLoss":
@@ -251,10 +259,13 @@ if __name__ == "__main__":
         loss_fn = getattr(torch.nn, args.loss_function)()
     
     log_summary = args.log_summary
-
-    checkpt_path = f"checkpt/{stratergy}/{dataset.name}/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
-
-
+    checkpt_path = f"checkpt/{stratergy}/{dataset.name}/optimized/aplha_2/epoch_{epochs}/{global_rounds}_rounds_{local_rounds}_epochs_per_round/"
+    # v2 skipped boosting 1st round, this is the best so
+    # v3 in final alpha, changed lamba to 1
+    # v4 stop boosting
+    # v5 updated the error threshold
+    # v6 (error_rate > self.error_threshold) added this condition for boosting
+    # v7 removed constant alpha
     client_ids = get_client_ids(train_data_dir)
 
     if args.dataset == Dataset.FEMNIST:
@@ -262,20 +273,18 @@ if __name__ == "__main__":
         learning_rate = float(config['FEMNIST']['learning_rate'])
         batch_size = int(config['FEMNIST']['batch_size'])
         weight_decay = float(config['FEMNIST']['weight_decay'])
-        xi = int(config['FEMNIST']['xi'])
-        tau = int(config['FEMNIST']['tau'])
-        min_clients = int(config['FEMNIST']['min_clients'])
-        max_clients = int(config['FEMNIST']['max_clients'])
+        num_classes = int(config['FEMNIST']['num_classes'])
+        training_samples = json.load(open(f"{data_dir}/training_samples.json"))
+        alpha_constant = float(config['FEMNIST']['alpha_constant'])
 
     elif args.dataset == Dataset.MNIST:
         model = MNISTNet()
         learning_rate = float(config['MNIST']['learning_rate'])
         batch_size = int(config['MNIST']['batch_size'])
         weight_decay = float(config['MNIST']['weight_decay'])
-        xi = int(config['MNIST']['xi'])
-        tau = int(config['MNIST']['tau'])
-        min_clients = int(config['MNIST']['min_clients'])
-        max_clients = int(config['MNIST']['max_clients'])
+        num_classes = int(config['MNIST']['num_classes'])
+        training_samples = json.load(open(f"{data_dir}/training_samples.json"))
+        alpha_constant = float(config['MNIST']['alpha_constant'])
 
     elif args.dataset == Dataset.KV:
         model = ShallowNN(176)
@@ -286,17 +295,18 @@ if __name__ == "__main__":
         loss_fn,
         train_data_dir,
         test_data_dir,
+        num_classes,
         global_rounds,
         stratergy,
         learning_rate,
         batch_size,
         weight_decay,
     )
-    
+
     print("Federation with clients " + ", ".join(client_ids))
 
     start = time.time()
-    trained_model = federation.train(min_clients, max_clients, max_local_round=local_rounds, threshold=loss_threshould, patience=patience)
+    trained_model = federation.train(training_samples, max_local_round=local_rounds, threshold=loss_threshould, patience=patience, alpha_constant=alpha_constant)
     model_path = f"{checkpt_path}/global_model.pth"
     federation.save_models(trained_model, model_path)
     print("Federation with clients " + ", ".join(client_ids))

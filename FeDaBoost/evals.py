@@ -197,6 +197,22 @@ def evaluate_mae_with_confidence(
 
     return avg_mae, (lower_mae, upper_mae), bootstrap_mae_std
 
+def performance(loss_fn, ckpt,testdata, ids):
+    losses = {}
+    f1s = {}
+    accs = {}
+    for client in ids:
+        test_dataset = torch.load(f"{testdata}/{client}.pt")
+        loss,f1, acc= evaluate_classification(ckpt, test_dataset, loss_fn, 8)
+        losses[client] = round(loss,4)
+        f1s[client] = round(f1,4)
+        accs[client] = round(acc,4)
+
+    val_loss = sum(losses.values())/len(losses.values())
+    val_f1 = sum(f1s.values())/len(f1s.values())
+    val_acc = sum(accs.values())/len(accs.values())
+    
+    return val_loss, val_f1, val_acc
 
 class FocalLoss(torch.nn.Module):
     def __init__(self, alpha=1, gamma=2, reduction='mean'):
@@ -235,6 +251,10 @@ class FocalLoss(torch.nn.Module):
             return focal_loss.sum()
         else:
             return focal_loss
+        
+    def update_gamma(self, new_gamma):
+        self.gamma = new_gamma
+
         
 
 class HybridLoss(nn.Module):

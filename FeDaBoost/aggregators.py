@@ -87,6 +87,8 @@ def fedProx(global_model: torch.nn.Module, local_models: List[torch.nn.Module], 
     
     return global_model
 
+
+
 def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float])-> torch.nn.Module:
     """
     Average model parameters using weighted averaging.
@@ -105,6 +107,7 @@ def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Modu
     global_model: torch.nn.Module object
         Updated global model.
     """
+    
     state_dicts = [model.state_dict() for model in local_models]
     normalized_weights = [weight / sum(weights) for weight in weights]
 
@@ -117,3 +120,34 @@ def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Modu
             global_model.state_dict()[key].copy_(stacked_params.sum(dim=0))  
 
     return global_model
+
+
+
+""" from copy import deepcopy
+
+def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float])-> torch.nn.Module:
+
+    weights = [weight / sum(weights) for weight in weights]
+    
+    new_model=deepcopy(global_model)
+    set_to_zero_model_weights(new_model)
+
+    clients_params = []
+    for local_model in local_models:
+        list_params=list(local_model.parameters())
+        list_params=[tens_param.detach() for tens_param in list_params]
+        clients_params.append(list_params)  
+
+    for k,client_hist in enumerate(clients_params):
+        
+        for idx, layer_weights in enumerate(new_model.parameters()):
+
+            contribution=client_hist[idx].data*weights[k]
+            layer_weights.data.add_(contribution)
+            
+    return new_model
+
+def set_to_zero_model_weights(model):
+
+    for layer_weigths in model.parameters():
+        layer_weigths.data.sub_(layer_weigths.data) """
