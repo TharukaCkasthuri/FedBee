@@ -51,8 +51,8 @@ def main():
     folder_path = args.dir
     config = load_config()
 
-    min_clients = int(config['MNIST']['min_clients'])
-    max_clients = int(config['MNIST']['max_clients'])
+    min_clients = int(config['FEMNIST']['min_clients'])
+    max_clients = int(config['FEMNIST']['max_clients'])
 
     client_ids = get_client_ids(f"{folder_path}/trainpt")
 

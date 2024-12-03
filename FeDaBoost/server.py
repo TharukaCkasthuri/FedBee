@@ -25,6 +25,7 @@ import logging
 
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
@@ -407,6 +408,7 @@ class OptimaServer(Server):
     def __init__(self, rounds: int, strategy: callable, checkpt_path:str=None,  log_dir:str = 'runs', max_local_round = 10) -> None:
         super().__init__(rounds, strategy, checkpt_path, log_dir)
         self.max_local_round = max_local_round
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         logging.info("FedaBoost-Optima Boosting Server Initialized")
 
 
@@ -481,7 +483,8 @@ class OptimaServer(Server):
             logging.info(f"Alphas: {alphas}")
             final_alphas = influence_alpha(0.5, alphas, alpha_constant)
             logging.info(f"Final Alphas: {final_alphas}")
-            self.global_model, update_status = self.__aggregate(train_clients, alphas.values())
+            alpha_values = self.scaler.fit_transform(np.array(list(alphas.values())).reshape(-1, 1))
+            self.global_model, update_status = self.__aggregate(train_clients, alpha_values.flatten())
 
             self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
 

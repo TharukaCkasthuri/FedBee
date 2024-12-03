@@ -247,7 +247,7 @@ def influence_alpha(lambda_param: float, alphas: dict, cons: int) -> dict:
     return final_alphas
     
 
-def adjust_epochs(client_weights, e_base=5, beta=10):
+def adjust_epochs(client_weights, e_base=1, beta=10):
     """
     Adjust local training epochs for each client based on their weights.
     
@@ -271,6 +271,25 @@ def adjust_epochs(client_weights, e_base=5, beta=10):
         adjusted_epochs[client] = epochs
     
     return adjusted_epochs
+
+def adjust_epochs_single_client(weight, e_base=1, beta=2):
+    """
+    Adjust local training epochs for a single client based on their weight.
+
+    Parameters:
+    - weight: The weight of the client (a float).
+    - e_base: Minimum number of training epochs (default is 1).
+    - beta: Scaling factor to control how much weight influences the epoch count (default is 10).
+
+    Returns:
+    - Adjusted number of epochs for the client (an integer).
+    """
+    # Normalize the weight to ensure it represents a proportion (0-1)
+    # For a single client, we assume weight is already correctly scaled.
+    calculated_epochs = e_base + beta * weight
+    epochs = max(1, int(calculated_epochs))  # Ensure at least 1 epoch
+    print(f"Weight: {weight}, Calculated Epochs: {calculated_epochs}, Adjusted Epochs: {epochs}")
+    return epochs
 
 
 def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=20):

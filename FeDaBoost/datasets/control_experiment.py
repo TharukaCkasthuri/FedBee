@@ -12,9 +12,9 @@ def main():
 
     if isinstance(training_sample, np.ndarray):
         training_sample = training_sample.tolist()
-    training_samples = {i: training_sample for i in range(100)}
+    training_samples = {i: training_sample for i in range(101)}
 
-    output_file = f"{folder_path}/training_samples_ctrl_experiment.json"
+    output_file = f"{folder_path}/training_samples_ctrl_experiment_100.json"
 
     with open(output_file, 'w') as f:
         json.dump(training_samples, f, indent=4)

@@ -159,7 +159,7 @@ class Client:
                 print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
                 logging.info(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
             else:
-                pass
+                no_improvement_rounds = 0
 
             if no_improvement_rounds >= patience:
                 print(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
@@ -252,9 +252,9 @@ class BoostingClient(Client):
         )
 
         self.eta = 0.1
-        self.error_threshold = 0.4
+        self.error_threshold = 0.3
         self.num_classes = num_classes
-        self.loss_fn.gamma = 1
+        self.loss_fn.gamma = 0
 
     def train(self, global_round, max_local_round, threshold=0.01, patience=2) -> tuple:
         """
@@ -271,7 +271,7 @@ class BoostingClient(Client):
         """
 
         error_rate, alpha = self.get_alpha()
-        self.weight =self.update_weight(alpha, performance_indicator = (error_rate > self.error_threshold))
+        self.weight = self.update_weight(alpha, performance_indicator = (error_rate > self.error_threshold))
 
         print(f"The client training is boosted by: {self.weight}")
         logging.info(f"The client training is boosted by: {self.weight}")
@@ -279,9 +279,9 @@ class BoostingClient(Client):
         if global_round == 1:
             pass
         else:
-            if (error_rate > self.error_threshold):   
+            if (error_rate > self.error_threshold):
                 new_gamma = min((self.weight + self.loss_fn.gamma), 3)
-                self.loss_fn.update_gamma(new_gamma)
+                #self.loss_fn.update_gamma(new_gamma)
 
         logging.info(f"Client focal loss gamma: {self.loss_fn.gamma}")
 
@@ -290,6 +290,8 @@ class BoostingClient(Client):
 
         print(f"Client: {self.client_id} \tTraining...")
         logging.info(f"Client: {self.client_id} \tTraining...")
+
+        
 
         for epoch in range(max_local_round):
             print("\n")
@@ -324,14 +326,14 @@ class BoostingClient(Client):
                 print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
                 logging.info(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
             else:
-                pass
+                no_improvement_rounds = 0
 
             if no_improvement_rounds >= patience:
                 print(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
                 logging.info(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
                 break
 
-            previous_loss_avg = loss_avg
+            previous_loss_avg = loss_avg            
 
         return self.local_model
 

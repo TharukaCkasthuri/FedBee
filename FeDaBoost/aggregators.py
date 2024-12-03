@@ -87,8 +87,6 @@ def fedProx(global_model: torch.nn.Module, local_models: List[torch.nn.Module], 
     
     return global_model
 
-
-
 def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float])-> torch.nn.Module:
     """
     Average model parameters using weighted averaging.
@@ -123,7 +121,8 @@ def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Modu
 
 
 
-""" from copy import deepcopy
+""" 
+from copy import deepcopy
 
 def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Module], weights: List[float])-> torch.nn.Module:
 
@@ -150,4 +149,6 @@ def weighted_avg(global_model: torch.nn.Module, local_models: List[torch.nn.Modu
 def set_to_zero_model_weights(model):
 
     for layer_weigths in model.parameters():
-        layer_weigths.data.sub_(layer_weigths.data) """
+        layer_weigths.data.sub_(layer_weigths.data) 
+        
+"""
