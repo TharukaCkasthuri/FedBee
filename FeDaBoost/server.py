@@ -25,6 +25,7 @@ import logging
 
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler
 
 from clients import Client
 from aggregators import fedAvg, fedProx, weighted_avg
@@ -209,7 +210,7 @@ class Server:
         self.client_dict[client.client_id] = client
 
 
-    def train(self, min_clients:int, max_clients:int, max_local_round:int, threshold:float, patience:int) -> torch.nn.Module:
+    def train(self, train_samples:dict, max_local_round:int, threshold:float, patience:int) -> torch.nn.Module:
         """
         Train the model using federated learning.
 
@@ -232,7 +233,8 @@ class Server:
             logging.info(f"\n | Global Training Round : {round} |\n")
             num_data_points = {}
 
-            train_clients = self.sample_clients(random.randint(min_clients, max_clients))
+            train_clients_list= train_samples[str(round)]
+            train_clients = {client: self.client_dict[client] for client in train_clients_list}
             logging.info(f"Selected Clients: {train_clients.keys()}")
 
             for client in train_clients.values():
@@ -248,8 +250,8 @@ class Server:
             self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
             print(f"Model Updated: {update_status}")
 
-            if consecutive_loss_change_rounds == 3:
-                print("The global model parameters have not been updated for 3 consecutive rounds, so the training has converged.")
+            if consecutive_loss_change_rounds == 5:
+                print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
             
             self._broadcast(self.global_model)
@@ -260,7 +262,7 @@ class Server:
             else:
                 consecutive_no_update_rounds = 0
 
-            if consecutive_no_update_rounds == 3:
+            if consecutive_no_update_rounds == 5:
                 print("The global model parameters have not been updated for 5 consecutive rounds, so the training has converged.")
                 break
 
@@ -406,6 +408,7 @@ class OptimaServer(Server):
     def __init__(self, rounds: int, strategy: callable, checkpt_path:str=None,  log_dir:str = 'runs', max_local_round = 10) -> None:
         super().__init__(rounds, strategy, checkpt_path, log_dir)
         self.max_local_round = max_local_round
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         logging.info("FedaBoost-Optima Boosting Server Initialized")
 
 
@@ -416,7 +419,7 @@ class OptimaServer(Server):
         Parameters:
         ----------------
         weights: list or None
-            List of weights for the weighted average strategy. If None, standard strategies are used.
+            List of weights for the weighted average strategy. 
 
         Returns:
         ----------------
@@ -429,12 +432,13 @@ class OptimaServer(Server):
         prev_params = [p.clone() for p in self.global_model.parameters()]
         client_models = [client.get_model() for client in trained_clients.values()]
         self.global_model = weighted_avg(self.global_model, client_models, weights)
+
         updated_params = [p.clone() for p in self.global_model.parameters()]
         updated = self._check_model_update(prev_params, updated_params)
         return self.global_model, updated
 
 
-    def train(self, min_clients:int, max_clients:int, max_local_round:int, threshold:float, patience:int) -> torch.nn.Module:
+    def train(self, train_samples:dict, max_local_round:int, threshold:float, patience:int, alpha_constant) -> torch.nn.Module:
         """
         Train the model using federated learning.
 
@@ -451,7 +455,9 @@ class OptimaServer(Server):
         consecutive_no_update_rounds = 0
 
         weights_dict = {client: (1 / len(self.client_dict)) for client in self.client_dict}
-        boost_dict = {client: 0 for client in self.client_dict}
+
+        for client in self.client_dict.values():
+            client.set_weight(weights_dict[client.client_id])
 
         logging.info(f"Initial Weights: {weights_dict}")
         for round in range(1,self.rounds+1):
@@ -461,31 +467,24 @@ class OptimaServer(Server):
             logging.info(f"\n | Global Training Round : {round} |\n")
 
             alphas = {}
-            train_clients = self.sample_clients(random.randint(min_clients, max_clients))
+            train_clients_list= train_samples[str(round)]
+            train_clients = {client: self.client_dict[client] for client in train_clients_list}
+
             for client in train_clients.values():
                 client.set_model(self.global_model.state_dict())
 
-                error_rate = client.get_error_rate()
-                logging.info(f"Client {client.client_id} Error rate: {error_rate}")
-
-                alpha = client.get_alpha(error_rate)
+                _ = client.train(round, max_local_round, threshold, patience)
+                _, alpha = client.get_alpha()
                 alphas[client.client_id] = alpha
-
-                tmp = weights_dict[client.client_id]
-                logging.info(f"Client {client.client_id} Previouse Weight: {tmp}")
-                weights_dict[client.client_id] = tmp * alpha
-                
-                logging.info(f"Client {client.client_id} Alpha: {alpha}")
-                _ = client.train(round, max_local_round, threshold, patience, weight = alpha)
+                #logging.info(f"Client {client.client_id} Alpha: {alpha}")
                 self._receive(client)
 
 
-            #filtering out the clients that have not been selected for the current round
-
-            #updated_weights = {client: weights_dict[client] for client in train_clients.keys()}
-            #weights = get_weights(alphas, updated_weights)
             logging.info(f"Alphas: {alphas}")
-            self.global_model, update_status = self.__aggregate(train_clients, alphas.values())
+            final_alphas = influence_alpha(0.5, alphas, alpha_constant)
+            logging.info(f"Final Alphas: {final_alphas}")
+            alpha_values = self.scaler.fit_transform(np.array(list(alphas.values())).reshape(-1, 1))
+            self.global_model, update_status = self.__aggregate(train_clients, alpha_values.flatten())
 
             self.save_checkpt(self.global_model, f"{self.checkpoint_path}/checkpoints/ckpt_{round}.pt")
 

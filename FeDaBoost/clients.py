@@ -159,7 +159,7 @@ class Client:
                 print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
                 logging.info(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
             else:
-                pass
+                no_improvement_rounds = 0
 
             if no_improvement_rounds >= patience:
                 print(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
@@ -237,6 +237,7 @@ class BoostingClient(Client):
         learning_rate: float,
         weight_decay: float,
         local_model: object = None,
+        num_classes: int = 10,
     ) -> None:
         
         super().__init__(
@@ -250,30 +251,47 @@ class BoostingClient(Client):
             local_model
         )
 
-        self.num_classes = train_dataset.num_classes()
+        self.eta = 0.1
+        self.error_threshold = 0.3
+        self.num_classes = num_classes
+        self.loss_fn.gamma = 0
 
-    def train(self, global_round, max_local_round, threshold=0.01, patience=2, weight:float=1) -> tuple:
+    def train(self, global_round, max_local_round, threshold=0.01, patience=2) -> tuple:
         """
         Training the model, using the fedaboost-optima strategy.
 
         Parameters:
         ------------
-        model: torch.nn.Module object; model to be trained
-        loss_fn: torch.nn.Module object; loss function
+        model: torch.nn.Module object; model to be trained.
+        loss_fn: torch.nn.Module object; loss function.
 
         Returns:
         ------------
-        model: torch.nn.Module object; trained model
+        model: torch.nn.Module object; trained model.
         """
-        logging.info(f"The client training is boosted by: {weight}")
-        self.loss_fn.gamma = 2 + 6 /( 1+ math.exp(weight))
-        self.loss_fn.alpha = 1 + 6 / (1 + math.exp(weight))
-        logging.info(f"Client focal loss gamma: {self.loss_fn.gamma}")  
+
+        error_rate, alpha = self.get_alpha()
+        self.weight = self.update_weight(alpha, performance_indicator = (error_rate > self.error_threshold))
+
+        print(f"The client training is boosted by: {self.weight}")
+        logging.info(f"The client training is boosted by: {self.weight}")
+
+        if global_round == 1:
+            pass
+        else:
+            if (error_rate > self.error_threshold):
+                new_gamma = min((self.weight + self.loss_fn.gamma), 3)
+                #self.loss_fn.update_gamma(new_gamma)
+
+        logging.info(f"Client focal loss gamma: {self.loss_fn.gamma}")
+
         previous_loss_avg = float('inf')  
         no_improvement_rounds = 0  
 
         print(f"Client: {self.client_id} \tTraining...")
         logging.info(f"Client: {self.client_id} \tTraining...")
+
+        
 
         for epoch in range(max_local_round):
             print("\n")
@@ -282,7 +300,7 @@ class BoostingClient(Client):
                 x, y = x.to(self.device), y.to(self.device)
                 outputs = self.local_model(x)
 
-                if isinstance(self.loss_fn, torch.nn.CrossEntropyLoss) and isinstance(self.train_dataset, FEMNISTDataset):
+                if isinstance(self.train_dataset, FEMNISTDataset):
                     y = y.view(-1)
                 elif isinstance(self.train_dataset, MNISTDataset):
                     y = torch.argmax(y, dim=1)
@@ -297,28 +315,29 @@ class BoostingClient(Client):
                 batch_loss.append(loss.item())
     
             loss_avg = sum(batch_loss) / len(batch_loss)    
-            print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {self.loss_fn.alpha}")
-            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {self.loss_fn.alpha}")
+            print(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {alpha}")
+            logging.info(f"Client: {self.client_id} \tEpoch: {epoch + 1} \tAverage Training Loss: {loss_avg} \tGlobal Round: {global_round} {self.loss_fn.gamma} {alpha}")
 
             # Dynamic loss reduction evaluation.
             loss_reduction = previous_loss_avg - loss_avg
+
             if loss_reduction < threshold:
                 no_improvement_rounds += 1
                 print(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
                 logging.info(f"Loss reduction below threshold ({loss_reduction:.6f}). No improvement rounds: {no_improvement_rounds}")
             else:
-                pass
+                no_improvement_rounds = 0
 
             if no_improvement_rounds >= patience:
                 print(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
                 logging.info(f"Stopping early at local epoch {epoch + 1} due to no significant improvement.")
                 break
 
-            previous_loss_avg = loss_avg
+            previous_loss_avg = loss_avg            
 
         return self.local_model
 
-    def get_error_rate(self) -> float:
+    def __get_error_rate(self) -> float:
         """
         Evaluate the model on the validation dataset and return the error rate.
 
@@ -347,34 +366,51 @@ class BoostingClient(Client):
 
         # Error rate as the proportion of incorrect predictions
         error_rate = incorrect_preds / total_samples if total_samples > 0 else 0
-
-        logging.info(f"Client: {self.client_id} \tError Rate: {error_rate}")
-        print(type(error_rate))
         return error_rate
     
-    def get_alpha(self, error_rate: float) -> float:
+    def get_alpha(self):
         """
         Calculate adjusted weights for client in the FL setting, 
         giving higher weights to clients with lower errors with the global model.
 
         Parameters:
         - error: Error value for the client validation data with the global model.
-        - num_classes: Number of classes (default is 10).
 
         Returns:
         - Adjusted weight (alpha) for the client.
         """
-        print(type(error_rate))
+        error_rate = self.__get_error_rate()
+        logging.info(f"Client {self.client_id} Error rate: {error_rate}")
+
         if 0 < error_rate < 1:
             alpha = np.log((1 - error_rate) / (error_rate)) + np.log(self.num_classes - 1)
         elif error_rate == 1:
-            alpha = 1
+            alpha = np.log((1 - (1-1e-6)) / (1-1e-6)) + np.log(self.num_classes - 1)
         elif error_rate == 0:
-            alpha = 0
+            alpha = np.log((1 - 1e-6) / (1e-6)) + np.log(self.num_classes - 1)
         else:
             raise ValueError("Error value must be in the range [0, 1].")
 
-        return alpha
-
-
+        return error_rate, alpha
     
+    def set_weight(self, weight:float) -> None:
+        """
+        Set the weight for the client.
+
+        Parameters:
+        ------------
+        weight: float; weight
+        """
+        self.weight = weight
+        return self.weight
+
+    def update_weight(self, alpha, performance_indicator=1) -> None:
+        """
+        Update the weights for the client.
+
+        Parameters:
+        ------------
+        weight: float; weight
+        """
+        self.weight = self.weight * math.exp(float(self.eta) * -float(alpha) * int(performance_indicator))
+        return self.weight

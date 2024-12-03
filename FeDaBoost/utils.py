@@ -220,13 +220,14 @@ def get_weights(alpha: dict, prev_weights: dict):
     return new_weights
 
 
-def influence_alpha(lambda_param:float, alphas:dict)->dict:
+def influence_alpha(lambda_param: float, alphas: dict, cons: int) -> dict:
     """
     Calculate the influence of alpha values in AdaBoost based on local and global performance.
 
     Parameters:
     - lambda_param: Influence factor (lambda), a value between 0 and 1.
     - alphas: Dictionary of initial alpha values, {client_id: alpha_j_initial}.
+    - cons: Constant to add to each alpha before calculating averages.
 
     Returns:
     - A dictionary with the adjusted alpha values, {client_id: adjusted_alpha_j}.
@@ -236,15 +237,17 @@ def influence_alpha(lambda_param:float, alphas:dict)->dict:
     final_alphas = {}  
     
     for client, alpha_initial in alphas.items():
-        other_alphas_avg = sum(alpha for other_client, alpha in alphas.items() if other_client != client) / (k - 1)
+        # Add the constant to each alpha before averaging
+        other_alphas_avg = sum(alpha + cons for other_client, alpha in alphas.items() if other_client != client) / (k - 1)
         
-        adjusted_alpha = lambda_param * alpha_initial + (1 - lambda_param) * other_alphas_avg
+        # Calculate the adjusted alpha with the influence factor
+        adjusted_alpha = lambda_param * (alpha_initial + cons) + (1 - lambda_param) * other_alphas_avg
         final_alphas[client] = adjusted_alpha
     
     return final_alphas
     
 
-def adjust_epochs(client_weights, e_base=5, beta=10):
+def adjust_epochs(client_weights, e_base=1, beta=10):
     """
     Adjust local training epochs for each client based on their weights.
     
@@ -268,6 +271,25 @@ def adjust_epochs(client_weights, e_base=5, beta=10):
         adjusted_epochs[client] = epochs
     
     return adjusted_epochs
+
+def adjust_epochs_single_client(weight, e_base=1, beta=2):
+    """
+    Adjust local training epochs for a single client based on their weight.
+
+    Parameters:
+    - weight: The weight of the client (a float).
+    - e_base: Minimum number of training epochs (default is 1).
+    - beta: Scaling factor to control how much weight influences the epoch count (default is 10).
+
+    Returns:
+    - Adjusted number of epochs for the client (an integer).
+    """
+    # Normalize the weight to ensure it represents a proportion (0-1)
+    # For a single client, we assume weight is already correctly scaled.
+    calculated_epochs = e_base + beta * weight
+    epochs = max(1, int(calculated_epochs))  # Ensure at least 1 epoch
+    print(f"Weight: {weight}, Calculated Epochs: {calculated_epochs}, Adjusted Epochs: {epochs}")
+    return epochs
 
 
 def adjust_local_epochs(current_loss, previous_loss, e_base=5, gamma=20):
@@ -313,3 +335,4 @@ def z_scores(weight_dict):
     z_scores = {key: (value - mean) / std_dev for key, value in weight_dict.items()}
     
     return z_scores
+

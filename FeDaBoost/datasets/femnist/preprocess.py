@@ -42,7 +42,8 @@ def read_dir(data_dir:str)->tuple:
 
 
 def read_data(train_data_dir:str, test_data_dir:str)->tuple:
-    """parses data in given train and test data directories
+    """
+    Parses data in given train and test data directories
 
     assumes:
     - the data in the input directories are .json files with 
@@ -140,7 +141,7 @@ def main():
     train_clients, train_groups, train_data, test_data = read_data(train_data_dir, test_data_dir)
 
     for client in train_clients:
-        if len(train_data[client]['y']) > min_samples and len(test_data[client]['y']) > min_samples:
+        if len(train_data[client]['y']) > min_samples and len(test_data[client]['y']) > 8:
             if not os.path.exists("./trainpt"):
                 os.makedirs("./trainpt")
             if not os.path.exists("./testpt"):
